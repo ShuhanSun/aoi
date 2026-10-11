@@ -202,6 +202,7 @@ Focus on making targeted fixes based on the diagnosis from the Observer.
         root_cause_component = "Unknown"
         root_cause_issue = "Unknown"
         namespace = "Unknown"
+        fix_method = "Unknown"
         
         if isinstance(executor_context, dict):
             root_cause = executor_context.get('root_cause', {})
