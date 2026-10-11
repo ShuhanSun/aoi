@@ -15,6 +15,7 @@ from memory.memory_item import (
 )
 from prompts.loader import get_prompt_loader
 from utils.text_utils import deduplicate_text
+from utils.json_response import parse_model_json
 
 
 class ExecutorAgent(BaseAgent):
@@ -488,7 +489,7 @@ Focus on making targeted fixes based on the diagnosis from the Observer.
             # 尝试JSON解析
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
-                json_data = json.loads(json_match.group())
+                json_data = parse_model_json(json_match.group())
 
                 # 提取所有字段
                 for key in ["analysis", "use_probe", "probe_instruction",

@@ -45,10 +45,69 @@ class ITBenchEnvironmentClientTest(unittest.TestCase):
         run.assert_not_called()
 
     def test_submission_is_not_a_success_verdict(self):
+        self.client.repaired = True
+        self.client.verified_after_repair = True
         result = self.client.execute_action("submit()")
         self.assertTrue(result["is_submission"])
         self.assertTrue(self.client.submitted)
         self.assertFalse(self.client.is_problem_solved())
+
+    @patch("benchmarks.itbench.client.subprocess.run")
+    def test_patch_json_is_passed_without_shell_quoting(self, run):
+        run.return_value.returncode = 0
+        run.return_value.stdout = "patched"
+        run.return_value.stderr = ""
+        payload = json.dumps({"data": {"demo.flagd.json": '{"flags": {"name": "value with apostrophe\'s"}}'}})
+        args = ['patch', 'configmap', 'flagd-config', '-n', 'otel-demo', '--type=merge', '-p', payload]
+        result = self.client.execute_action(f"exec_kubectl({args!r})")
+        self.assertNotIn("error", result)
+        self.assertEqual(run.call_args.args[0][-1], payload)
+        self.assertFalse(self.client.verified_after_repair)
+
+    @patch("benchmarks.itbench.client.subprocess.run")
+    def test_stdin_apply_is_noninteractive(self, run):
+        run.return_value.returncode = 0
+        run.return_value.stdout = "configured"
+        run.return_value.stderr = ""
+        manifest = 'apiVersion: v1\nkind: ConfigMap\n'
+        self.client.execute_action(f"exec_kubectl(['apply', '-n', 'otel-demo', '-f', '-'], stdin={manifest!r})")
+        self.assertEqual(run.call_args.kwargs['input'], manifest)
+
+    @patch("benchmarks.itbench.client.subprocess.run")
+    def test_interactive_commands_never_start(self, run):
+        for verb in ('edit', 'exec', 'port-forward'):
+            result = self.client.execute_action(f"exec_kubectl([{verb!r}, 'pod-a'])")
+            self.assertTrue(result['error'])
+        run.assert_not_called()
+
+    @patch("benchmarks.itbench.client.subprocess.run")
+    def test_submission_needs_repair_then_verification(self, run):
+        run.return_value.returncode = 0
+        run.return_value.stdout = 'ok'
+        run.return_value.stderr = ''
+        self.assertTrue(self.client.execute_action('submit()')['error'])
+        self.client.execute_action("exec_kubectl(['patch', 'configmap', 'flags', '-p', '{}'])")
+        self.assertTrue(self.client.execute_action('submit()')['error'])
+        self.client.execute_probe_action("exec_kubectl(['get', 'configmap', 'flags'])")
+        self.assertTrue(self.client.execute_action('submit()')['is_submission'])
+        self.assertFalse(self.client.is_problem_solved())
+
+    @patch("benchmarks.itbench.client.subprocess.run")
+    def test_failed_repair_and_failed_read_do_not_allow_submission(self, run):
+        run.return_value.returncode = 1
+        run.return_value.stdout = ''
+        run.return_value.stderr = 'failed'
+        self.client.execute_action("exec_kubectl(['patch', 'configmap', 'flags', '-p', '{}'])")
+        self.assertFalse(self.client.repaired)
+        self.client.repaired = True
+        self.client.execute_probe_action("exec_kubectl(['get', 'configmap', 'flags'])")
+        self.assertTrue(self.client.execute_action('submit()')['error'])
+
+    @patch("benchmarks.itbench.client.subprocess.run")
+    def test_structured_probe_cannot_change_connection_or_resources(self, run):
+        for args in (['delete', 'pod', 'x'], ['--as', 'admin', 'get', 'pods'], ['-s', 'other', 'get', 'pods']):
+            self.assertIn('Error:', self.client.execute_probe_action(f'exec_kubectl({args!r})'))
+        run.assert_not_called()
 
     @patch("benchmarks.itbench.client.urlopen")
     def test_prometheus_alerts_use_configured_endpoint(self, urlopen):
@@ -67,6 +126,9 @@ class ITBenchEnvironmentClientTest(unittest.TestCase):
         path.write_text(json.dumps({"passed": True}), encoding="utf-8")
         self.assertTrue(load_itbench_verdict(path)["passed"])
         path.write_text(json.dumps({"status": "submitted"}), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            load_itbench_verdict(path)
+        path.write_text('{"official": false, "passed": true}', encoding="utf-8")
         with self.assertRaises(ValueError):
             load_itbench_verdict(path)
 
@@ -99,6 +161,18 @@ class ITBenchEnvironmentClientTest(unittest.TestCase):
                 })
             self.assertEqual(calls[0]["total_tokens"], 16)
             original.assert_called_once()
+
+    def test_provider_usage_has_agent_attribution_and_restores_runner(self):
+        import asyncio
+        import aworld.models.openai_provider as provider_module
+        from aworld.runner import Runners
+        async def fake_run(**kwargs):
+            provider_module.usage_process({'prompt_tokens': 5, 'completion_tokens': 2, 'total_tokens': 7})
+        with patch.object(Runners, 'run', fake_run), patch.object(provider_module, 'usage_process'):
+            with capture_aworld_usage() as calls:
+                asyncio.run(Runners.run(agent=type('Agent', (), {'name': 'Probe Agent'})()))
+            self.assertEqual(calls[0]['role'], 'probe')
+            self.assertIs(Runners.run, fake_run)
 
     def test_openai_configuration_stays_with_itbench_runner(self):
         from aworld.models.openai_provider import OpenAIProvider

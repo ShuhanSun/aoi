@@ -246,6 +246,11 @@ class AIOPlatform:
                             "result": str(submit_result)
                         })
 
+                        if isinstance(submit_result, dict) and submit_result.get("error"):
+                            self.observer.previous_iteration_context = str(submit_result)
+                            self.execution_results["iterations"].append(iteration_data)
+                            return iteration_data
+
                         # 标记任务完成
                         if current_subtask:
                             current_subtask.complete_execution(True, f"Submitted: {submission_command}")
@@ -363,6 +368,11 @@ class AIOPlatform:
                         "command": submission_command,
                         "result": str(submit_result)
                     })
+
+                    if isinstance(submit_result, dict) and submit_result.get("error"):
+                        self.observer.previous_iteration_context = str(submit_result)
+                        self.execution_results["iterations"].append(iteration_data)
+                        return iteration_data
 
                     # 标记任务完成
                     if current_subtask:
