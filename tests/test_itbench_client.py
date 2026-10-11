@@ -7,6 +7,7 @@ from unittest.mock import patch
 from benchmarks.itbench.verdict import attach_verdict
 from benchmarks.itbench.client import ITBenchEnvironmentClient, load_itbench_verdict
 from benchmarks.itbench.summary import summarize
+from benchmarks.itbench.run import _configure_model
 from utils.aworld_usage_capture import capture_aworld_usage
 from utils.llm_usage import usage_from_result
 
@@ -98,6 +99,21 @@ class ITBenchEnvironmentClientTest(unittest.TestCase):
                 })
             self.assertEqual(calls[0]["total_tokens"], 16)
             original.assert_called_once()
+
+    def test_openai_configuration_stays_with_itbench_runner(self):
+        from aworld.models.openai_provider import OpenAIProvider
+
+        with patch("llm_config.API_SOURCE", "openai"), patch.object(
+            OpenAIProvider, "get_openai_params", return_value={
+                "model": "gpt-5.6-luna", "max_tokens": 100, "unused": None,
+            },
+        ):
+            config = _configure_model("gpt-5.6-luna", 0.7)
+            params = OpenAIProvider.get_openai_params(None)
+
+        self.assertEqual(config.llm_config.llm_temperature, 1.0)
+        self.assertNotIn("extra_body", getattr(config, "ext", {}))
+        self.assertEqual(params, {"model": "gpt-5.6-luna", "max_completion_tokens": 100})
 
     def test_summary_excludes_unverified_attempts_from_success_rate(self):
         result = summarize([

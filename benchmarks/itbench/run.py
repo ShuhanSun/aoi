@@ -18,6 +18,33 @@ from main import AIOPlatform
 from utils.aworld_usage_capture import capture_aworld_usage
 
 
+def _configure_model(model: str, temperature: float | None):
+    if llm_config.API_SOURCE != "openai":
+        return llm_config.create_llm_config(model=model, temperature=temperature)
+
+    # Keep OpenAI compatibility local to this benchmark runner. The base
+    # branch does not include the separate AIOpsLab model configuration fixes.
+    from aworld.models.openai_provider import OpenAIProvider
+
+    original = OpenAIProvider.get_openai_params
+    if getattr(original, "_itbench_compat", False) is not True:
+        def get_openai_params(self, *args, **kwargs):
+            params = original(self, *args, **kwargs)
+            params = {key: value for key, value in params.items() if value is not None}
+            if params.get("model", "").startswith("gpt-5.6-") and "max_tokens" in params:
+                params["max_completion_tokens"] = params.pop("max_tokens")
+            return params
+
+        get_openai_params._itbench_compat = True
+        OpenAIProvider.get_openai_params = get_openai_params
+
+    if model.startswith("gpt-5.6-"):
+        temperature = 1.0
+    return llm_config.create_llm_config(
+        model=model, temperature=temperature, disable_thinking=False,
+    )
+
+
 def _git_revision(directory: Path) -> str | None:
     result = subprocess.run(
         ["git", "-C", str(directory), "rev-parse", "HEAD"],
@@ -66,9 +93,7 @@ async def run(args: argparse.Namespace) -> dict:
         scenario_id, args.incident, kubeconfig, args.prometheus_url,
     )
     model = args.model or llm_config.MODEL
-    if llm_config.API_SOURCE == "openai":
-        llm_config.enable_openai_compatibility()
-    config = llm_config.create_llm_config(model=model, temperature=args.temperature)
+    config = _configure_model(model, args.temperature)
     platform = AIOPlatform(
         llm_config=config, env_client=client,
         max_iterations=args.max_iterations,
