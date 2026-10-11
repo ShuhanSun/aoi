@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import zipfile
+from urllib.request import urlopen
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,7 @@ from pathlib import Path
 import yaml
 
 from benchmarks.itbench.summary import summarize
+from benchmarks.itbench.review import review_directory
 
 
 APP_NAMESPACES = {"opentelemetry-demo": "otel-demo", "book-info": "book-info"}
@@ -171,14 +173,34 @@ class Batch:
         time.sleep(2)
         if self.forward.poll() is not None:
             raise StageError("Prometheus forwarding failed; inspect prometheus-forward.log")
+        with urlopen(f"http://127.0.0.1:{self.args.prometheus_port}/prometheus/api/v1/alerts", timeout=20) as response:
+            if json.load(response).get("status") != "success":
+                raise StageError("Prometheus alert API is not ready")
+
+    def check_targets(self, case):
+        scenario = yaml.safe_load(Path(case["catalog_source"]).read_text())
+        for group in scenario["faults"]:
+            for injection in group["injections"]:
+                for target in injection.get("targets", []):
+                    obj = target.get("kubernetes")
+                    if not obj:
+                        continue
+                    args = ["get", obj["kind"], obj["name"], "--ignore-not-found", "-o", "name"]
+                    if obj.get("namespace"):
+                        args += ["-n", obj["namespace"]]
+                    if not subprocess.check_output(self.kubectl(*args), timeout=30, text=True).strip():
+                        raise StageError(f"Benchmark target missing: {obj['kind']}/{obj['name']}; model trial not started")
 
     def snapshot(self, case, directory, name):
         state = {}
         for namespace in case["namespaces"]:
             try:
                 state[namespace] = json.loads(subprocess.check_output(
-                    self.kubectl("get", "pods,deployments,services,networkpolicies,resourcequotas",
+                    self.kubectl("get", "pods,deployments,statefulsets,services,networkpolicies,resourcequotas,persistentvolumeclaims,horizontalpodautoscalers,peerauthentications,authorizationpolicies,destinationrules",
                                  "-n", namespace, "-o", "json"), timeout=30))
+                namespace_object = json.loads(subprocess.check_output(
+                    self.kubectl("get", "namespace", namespace, "-o", "json"), timeout=30))
+                state[namespace]["items"].append(namespace_object)
             except (subprocess.SubprocessError, json.JSONDecodeError) as exc:
                 state[namespace] = {"error": str(exc)}
         write_json(directory / name, state)
@@ -226,7 +248,8 @@ class Batch:
                          "max_context_tokens": 4096, "max_output_tokens": 5000,
                          "input_usd_per_million": 0.15, "output_usd_per_million": 0.60,
                          "settle_seconds": self.args.settle_seconds, "model_timeout_seconds": self.args.model_timeout,
-                         "catalog": "library", "admin_context": "kind-kind-dev"}
+                         "catalog": "library", "admin_context": "kind-kind-dev",
+                         "submission_policy": "agent_decides", "prometheus_route_prefix": "/prometheus"}
         if manifest_path.exists():
             previous = json.loads(manifest_path.read_text())
             if previous["configuration"] != configuration or previous["cases"] != self.cases:
@@ -263,6 +286,10 @@ class Batch:
                               "ansible-playbook", "-i", "inventory", "project/manage_applications.yaml",
                               "--tags", "install_applications", "--extra-vars", json.dumps(case["deployment_variables"])],
                              directory / "deployment.log", 1800)
+                self.check_targets(case)
+                for namespace in case["namespaces"]:
+                    self.command(self.kubectl("rollout", "status", "deployment", "-n", namespace, "--timeout=180s"),
+                                 directory / "baseline-readiness.log", 200)
                 self.snapshot(case, directory, "baseline.json")
                 self.phase("injection", number)
                 self.make("inject-scenario-faults", number, directory / "injection.log", 600)
@@ -294,6 +321,7 @@ class Batch:
                 ledger["status"] = "model_error" if record.get("error") else "executed_ungraded"
                 ledger["error"] = record.get("error")
                 self.snapshot(case, directory, "post-model.json")
+                review_directory(directory)
             except (OSError, ValueError, subprocess.SubprocessError, StageError) as exc:
                 ledger["error"] = str(exc)
             finally:

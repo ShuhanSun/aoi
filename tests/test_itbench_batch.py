@@ -73,3 +73,14 @@ class BatchTest(unittest.TestCase):
             output=self.root / 'output', itbench_python='python3.13', docker_config='config'))
         with self.assertRaises(StageError):
             batch.make('remove-fault-resources', 16, self.root / 'cleanup.log')
+
+    @patch('benchmarks.itbench.batch.subprocess.check_output', return_value='')
+    def test_missing_target_is_an_environment_error_before_model_trial(self, command):
+        source = self.itbench / 'library/scenarios/16/scenario.yaml'
+        source.write_text(yaml.safe_dump({'faults': [{'injections': [{'targets': [{'kubernetes': {
+            'kind': 'Deployment', 'name': 'missing', 'namespace': 'otel-demo'}}]}]}]}))
+        batch = Batch.__new__(Batch)
+        batch.admin = self.root / 'admin'
+        with self.assertRaisesRegex(StageError, 'model trial not started'):
+            batch.check_targets({'catalog_source': str(source)})
+        self.assertIn(str(batch.admin), command.call_args.args[0])

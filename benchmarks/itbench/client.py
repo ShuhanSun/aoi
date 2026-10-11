@@ -120,10 +120,8 @@ class ITBenchEnvironmentClient:
             if expression.func.id == "submit":
                 if expression.args or expression.keywords or role == "probe":
                     raise ValueError("submit() takes no arguments and is unavailable to Probe")
-                if not self.repaired or not self.verified_after_repair:
-                    raise ValueError("Submission requires a successful repair followed by a successful read-only verification. Continue investigating or report failure at the iteration limit.")
                 self.submitted = True
-                result = {"result": "submitted for external ITBench evaluation", "is_submission": True}
+                result = {"result": "submitted; external ITBench verdict pending", "is_submission": True}
             elif expression.func.id in {"get_alerts", "query_prometheus"}:
                 if not self.prometheus_url:
                     raise ValueError("Prometheus URL was not configured")

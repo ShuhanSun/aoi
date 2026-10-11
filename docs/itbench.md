@@ -69,9 +69,10 @@ Agents should prefer `exec_kubectl(['get', 'pods', '-n', 'otel-demo'])` over
 nested shell strings. JSON patches are one argument in the list. For a
 manifest, use `exec_kubectl(['apply', '-n', 'otel-demo', '-f', '-'], stdin='...')`.
 Shell operators, interactive `kubectl edit`, remote shell execution, and
-connection overrides are rejected. Submission requires a successful mutation
-followed by a successful read; this gate checks tool execution, not benchmark
-success. Rejected submissions are fed back to the Observer.
+connection overrides are rejected. `submit()` records the agent's decision to
+finish without imposing an additional repair/read gate. It never establishes
+benchmark success. Tool errors and submission decisions are preserved for
+evaluation without changing AOI's reasoning or repair strategy.
 
 Each attempt writes `res/itbench/sre-<number>-<timestamp>.json` with the
 task ID, ITBench revision, model and budgets, tool calls with outputs,
@@ -158,3 +159,22 @@ NetworkPolicy faults need enforcement beyond Kind's default CNI. The tested
 keeps the existing CNI and kube-proxy. Its temporary-pod integration test confirmed
 allow → deny → allow. The upstream scenario-31 injector is patched to use
 `ingress: []`; an ingress rule with an empty ports list allows all ports.
+
+## Testing protocol after the first full suite
+
+The testing adapter accepts the agent's `submit()` without an extra repair/read
+requirement. AOI reasoning, task planning and repair strategy are unchanged.
+The batch checks the actual Prometheus alert API, validates catalog target
+existence and waits for baseline deployment rollout before fault injection.
+Missing targets remain environment errors; no substitute workloads are invented.
+
+`benchmarks.itbench.review` compares saved baseline, injected and post-model
+configuration fields and records workload readiness. The batch saves this as
+`local-review.json` before cleanup. This is a strict comparison to baseline,
+not an official mitigation verdict: alternative valid repairs and application
+traffic are not scored, uncaptured changes remain unknown. Namespace labels
+and Istio policies are included in new snapshots. Official success stays null.
+
+The public ITBench-Evaluations toolkit evaluates RCA agent outputs rather than
+providing an online SRE mitigation grader. The corrected testing protocol uses
+a new output directory; the original suite and its limitations are preserved.

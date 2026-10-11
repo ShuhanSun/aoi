@@ -45,8 +45,6 @@ class ITBenchEnvironmentClientTest(unittest.TestCase):
         run.assert_not_called()
 
     def test_submission_is_not_a_success_verdict(self):
-        self.client.repaired = True
-        self.client.verified_after_repair = True
         result = self.client.execute_action("submit()")
         self.assertTrue(result["is_submission"])
         self.assertTrue(self.client.submitted)
@@ -81,19 +79,19 @@ class ITBenchEnvironmentClientTest(unittest.TestCase):
         run.assert_not_called()
 
     @patch("benchmarks.itbench.client.subprocess.run")
-    def test_submission_needs_repair_then_verification(self, run):
+    def test_submission_does_not_impose_extra_repair_or_read_gate(self, run):
         run.return_value.returncode = 0
         run.return_value.stdout = 'ok'
         run.return_value.stderr = ''
-        self.assertTrue(self.client.execute_action('submit()')['error'])
+        self.assertTrue(self.client.execute_action('submit()')['is_submission'])
         self.client.execute_action("exec_kubectl(['patch', 'configmap', 'flags', '-p', '{}'])")
-        self.assertTrue(self.client.execute_action('submit()')['error'])
+        self.assertTrue(self.client.execute_action('submit()')['is_submission'])
         self.client.execute_probe_action("exec_kubectl(['get', 'configmap', 'flags'])")
         self.assertTrue(self.client.execute_action('submit()')['is_submission'])
         self.assertFalse(self.client.is_problem_solved())
 
     @patch("benchmarks.itbench.client.subprocess.run")
-    def test_failed_repair_and_failed_read_do_not_allow_submission(self, run):
+    def test_failed_tools_do_not_change_submission_into_a_verdict(self, run):
         run.return_value.returncode = 1
         run.return_value.stdout = ''
         run.return_value.stderr = 'failed'
@@ -101,7 +99,8 @@ class ITBenchEnvironmentClientTest(unittest.TestCase):
         self.assertFalse(self.client.repaired)
         self.client.repaired = True
         self.client.execute_probe_action("exec_kubectl(['get', 'configmap', 'flags'])")
-        self.assertTrue(self.client.execute_action('submit()')['error'])
+        self.assertTrue(self.client.execute_action('submit()')['is_submission'])
+        self.assertFalse(self.client.is_problem_solved())
 
     @patch("benchmarks.itbench.client.subprocess.run")
     def test_structured_probe_cannot_change_connection_or_resources(self, run):
@@ -113,13 +112,13 @@ class ITBenchEnvironmentClientTest(unittest.TestCase):
     def test_prometheus_alerts_use_configured_endpoint(self, urlopen):
         client = ITBenchEnvironmentClient(
             "itbench-sre-1-mitigation-1", "Resolve alert", self.kubeconfig,
-            "http://prometheus.example:9090",
+            "http://prometheus.example:9090/prometheus",
         )
         response = urlopen.return_value.__enter__.return_value
         response.read.return_value = b'{"status":"success"}'
         result = client.execute_probe_action("get_alerts()")
         self.assertIn('"success"', result)
-        self.assertEqual(urlopen.call_args.args[0], "http://prometheus.example:9090/api/v1/alerts")
+        self.assertEqual(urlopen.call_args.args[0], "http://prometheus.example:9090/prometheus/api/v1/alerts")
 
     def test_only_external_boolean_verdict_counts(self):
         path = Path(self.directory.name) / "verdict.json"
