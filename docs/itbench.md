@@ -5,6 +5,26 @@ deployment, fault injection, restricted agent access, and grading. This adapter
 reuses AOI's Observer, Probe, Executor, and Compressor. It does not treat an
 AOI `submit()` call as a passing ITBench verdict.
 
+## Validated local deployment
+
+The integration was validated against ITBench commit `333afa05` on Kubernetes
+1.34.0. Reproducible environment fixes are in
+`benchmarks/itbench/patches/itbench-333afa05.patch`: scenario application enablement,
+failed-injection propagation, missing-object validation, pinned telemetry image
+and configuration corrections, and Jaeger database initialization.
+
+For a clean checkout at that revision:
+
+```sh
+git -C /absolute/path/to/ITBench apply --check --unidiff-zero /absolute/path/to/aoi/benchmarks/itbench/patches/itbench-333afa05.patch
+git -C /absolute/path/to/ITBench apply --unidiff-zero /absolute/path/to/aoi/benchmarks/itbench/patches/itbench-333afa05.patch
+```
+
+The existing local checkout already has these edits. Other revisions require
+reviewing the patch first. Ansible was run with ITBench's Python 3.13 environment
+and uv 0.12.24. The isolated Kind cluster uses MetalLB for gateway IPs;
+Prometheus is exposed to the host with `kubectl port-forward`.
+
 ## Prepare ITBench
 
 Follow the upstream [ITBench SRE scenario guide](https://github.com/itbench-hub/ITBench/blob/main/documentation/getting-started/scenarios.md).
@@ -45,6 +65,14 @@ with `--start-scenario`, which calls ITBench's `start-scenario` and
 `enable-agent-access` Make targets after its checkout has been configured.
 Use `--stop-scenario` only when the run and external evaluation are finished.
 
+Agents should prefer `exec_kubectl(['get', 'pods', '-n', 'otel-demo'])` over
+nested shell strings. JSON patches are one argument in the list. For a
+manifest, use `exec_kubectl(['apply', '-n', 'otel-demo', '-f', '-'], stdin='...')`.
+Shell operators, interactive `kubectl edit`, remote shell execution, and
+connection overrides are rejected. Submission requires a successful mutation
+followed by a successful read; this gate checks tool execution, not benchmark
+success. Rejected submissions are fed back to the Observer.
+
 Each attempt writes `res/itbench/sre-<number>-<timestamp>.json` with the
 task ID, ITBench revision, model and budgets, tool calls with outputs,
 Observer/Probe/Executor/Compressor token usage, and elapsed time. Pass
@@ -66,6 +94,23 @@ without rerunning the agent:
 AOI's submission and local command output are never used as an official
 pass/fail score. Do not compare unverified attempts with published ITBench
 success rates.
+
+For archived scenario 1, `--local-verify` additionally records whether the
+homepage flood flag is disabled and `flagd` / `load-generator` are running with
+at least one ready replica at the current generation. It records
+`local_verification`, with `official: false`, and leaves `success` unchanged.
+It does not establish full symptom recovery or an official score. Run it independently:
+
+```sh
+.venv/bin/python -m benchmarks.itbench.verify \
+  --kubeconfig /absolute/path/to/restricted-kubeconfig \
+  --output res/itbench/runtime/local-check.json
+```
+
+Local check JSON is rejected by the official verdict importer. The public
+[ITBench-Evaluations](https://github.com/itbench-hub/ITBench-Evaluations) toolkit
+scores SRE RCA outputs with an LLM judge; its RCA scores are not a live
+mitigation pass/fail verdict for this archived scenario.
 
 After grading, summarize all local attempts with:
 

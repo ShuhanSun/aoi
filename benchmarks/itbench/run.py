@@ -7,6 +7,7 @@ the restricted kubeconfig for tool calls and writes an auditable task record.
 import argparse
 import asyncio
 import json
+import hashlib
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,7 @@ from time import monotonic
 
 import llm_config
 from benchmarks.itbench.client import ITBenchEnvironmentClient, load_itbench_verdict
+from benchmarks.itbench.verify import verify
 from main import AIOPlatform
 from utils.aworld_usage_capture import capture_aworld_usage
 
@@ -110,6 +112,13 @@ async def run(args: argparse.Namespace) -> dict:
     verdict = load_itbench_verdict(args.verdict_json)
     usage = _token_usage(platform)
     if provider_calls:
+        usage = {}
+        for call in provider_calls:
+            bucket = usage.setdefault(call.get("role", "unattributed"), {
+                key: 0 for key in ("input_tokens", "output_tokens", "total_tokens")
+            })
+            for key in bucket:
+                bucket[key] += call[key]
         usage["total"] = {
             key: sum(call[key] for call in provider_calls)
             for key in ("input_tokens", "output_tokens", "total_tokens")
@@ -127,11 +136,23 @@ async def run(args: argparse.Namespace) -> dict:
             6,
         )
     raw_trace = Path("res/itbench/raw") / model / f"{client.session_id}.json"
+    patch_result = subprocess.run(["git", "-C", str(itbench_dir), "diff", "HEAD"],
+                                  capture_output=True, check=True)
+    local_verification = None
+    if getattr(args, "local_verify", False):
+        try:
+            local_verification = verify(kubeconfig, args.scenario_number)
+        except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+            local_verification = {"official": False, "source": "local_scenario_check",
+                                  "passed": None, "error": str(exc)}
     record = {
         "benchmark": "ITBench", "domain": "SRE", "task_type": "mitigation",
         "scenario_number": args.scenario_number, "task_id": scenario_id,
         "incident": args.incident,
         "itbench_revision": _git_revision(itbench_dir),
+        "itbench_working_tree_dirty": bool(patch_result.stdout),
+        "itbench_patch_sha256": hashlib.sha256(patch_result.stdout).hexdigest() if patch_result.stdout else None,
+        "aoi_revision": _git_revision(Path.cwd()),
         "started_at": started_at.isoformat(), "ended_at": ended_at.isoformat(),
         "duration_seconds": round(monotonic() - start_clock, 3),
         "configuration": {
@@ -142,17 +163,20 @@ async def run(args: argparse.Namespace) -> dict:
             "scenario_started_by_runner": args.start_scenario,
             "kubeconfig_path": str(kubeconfig),
             "prometheus_url": args.prometheus_url,
+            "input_usd_per_million": args.input_usd_per_million,
+            "output_usd_per_million": args.output_usd_per_million,
         },
         "attempt": attempt, "submitted": client.submitted,
         "raw_aoi_trace": str(raw_trace) if raw_trace.is_file() else None,
         "verdict": verdict, "success": (
             verdict.get("success", verdict.get("passed")) if verdict is not None else None
         ),
+        "local_verification": local_verification,
         "tool_calls": client.tool_calls, "token_usage": usage,
         "provider_usage_calls": provider_calls,
         "cost_usd": cost,
         "cost_note": (
-            None if cost is not None else
+            "Estimate at supplied standard rates; cached-input discounts are not applied." if cost is not None else
             "Model usage unavailable; cost cannot be estimated."
             if usage["source"] == "unavailable" else
             "Supply model input/output prices to estimate cost."
@@ -182,6 +206,7 @@ def main() -> None:
     parser.add_argument("--start-scenario", action="store_true")
     parser.add_argument("--stop-scenario", action="store_true")
     parser.add_argument("--verdict-json", type=Path, help="JSON from ITBench grader with boolean success/passed")
+    parser.add_argument("--local-verify", action="store_true", help="Check archived scenario 1 locally; never sets official success")
     parser.add_argument("--input-usd-per-million", type=float)
     parser.add_argument("--output-usd-per-million", type=float)
     parser.add_argument("--output", type=Path)
