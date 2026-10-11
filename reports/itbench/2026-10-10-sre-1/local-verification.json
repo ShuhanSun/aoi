@@ -1,0 +1,27 @@
+{
+  "source": "local_scenario_check",
+  "official": false,
+  "scenario_number": 1,
+  "passed": false,
+  "checks": [
+    {
+      "name": "homepage_flood_disabled",
+      "passed": false,
+      "state": "ENABLED",
+      "default_variant": "on"
+    },
+    {
+      "name": "flagd_ready",
+      "passed": true,
+      "desired_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "name": "load-generator_ready",
+      "passed": true,
+      "desired_replicas": 1,
+      "ready_replicas": 1
+    }
+  ],
+  "checked_at": "2026-10-11T11:22:35.477879+00:00"
+}

@@ -75,3 +75,6 @@ After grading, summarize all local attempts with:
 
 The summary counts unverified attempts separately and computes success rate
 only over externally graded attempts.
+
+A redacted record and report from a three-attempt local run of archived SRE
+scenario 1 are available in [reports/itbench/2026-10-10-sre-1](../reports/itbench/2026-10-10-sre-1/report.md).
