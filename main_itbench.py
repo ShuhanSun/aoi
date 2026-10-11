@@ -1,0 +1,175 @@
+"""Run AOI against one ITBench SRE mitigation scenario.
+
+ITBench deploys/injects the scenario and owns the pass/fail verdict. AOI uses
+the restricted kubeconfig for tool calls and writes an auditable task record.
+"""
+
+import argparse
+import asyncio
+import json
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+from time import monotonic
+
+import llm_config
+from environment.itbench_client import ITBenchEnvironmentClient, load_itbench_verdict
+from main import AIOPlatform
+from utils.aworld_usage_capture import capture_aworld_usage
+
+
+def _git_revision(directory: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "-C", str(directory), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _run_scenario_target(itbench_dir: Path, scenario_number: int, target: str) -> None:
+    scenario_dir = itbench_dir / "scenarios" / "sre"
+    if not (scenario_dir / "Makefile").is_file():
+        raise FileNotFoundError(f"ITBench SRE Makefile not found: {scenario_dir}")
+    subprocess.run(
+        ["make", f"SCENARIO_NUMBER={scenario_number}", target],
+        cwd=scenario_dir, check=True,
+    )
+
+
+def _token_usage(platform: AIOPlatform) -> dict:
+    usage = {}
+    for name in ("observer", "probe", "executor", "compressor"):
+        agent = getattr(platform, name)
+        if agent and hasattr(agent, "get_token_usage"):
+            usage[name] = agent.get_token_usage()
+        file_reader = getattr(agent, "file_reader", None) if agent else None
+        if file_reader and hasattr(file_reader, "get_token_usage"):
+            usage[f"{name}_file_reader"] = file_reader.get_token_usage()
+    usage["total"] = {
+        key: sum(item.get(key, 0) for item in usage.values())
+        for key in ("input_tokens", "output_tokens", "total_tokens")
+    }
+    return usage
+
+
+async def run(args: argparse.Namespace) -> dict:
+    if args.scenario_number < 1:
+        raise ValueError("scenario-number must be positive")
+    scenario_id = f"itbench-sre-{args.scenario_number}-mitigation-1"
+    itbench_dir = args.itbench_dir.expanduser().resolve()
+    kubeconfig = args.kubeconfig.expanduser().resolve()
+    if args.start_scenario:
+        _run_scenario_target(itbench_dir, args.scenario_number, "start-scenario")
+        _run_scenario_target(itbench_dir, args.scenario_number, "enable-agent-access")
+
+    client = ITBenchEnvironmentClient(
+        scenario_id, args.incident, kubeconfig, args.prometheus_url,
+    )
+    model = args.model or llm_config.MODEL
+    if llm_config.API_SOURCE == "openai":
+        llm_config.enable_openai_compatibility()
+    config = llm_config.create_llm_config(model=model, temperature=args.temperature)
+    platform = AIOPlatform(
+        llm_config=config, env_client=client,
+        max_iterations=args.max_iterations,
+        max_context_tokens=args.max_context_tokens,
+        max_output_tokens=args.max_output_tokens,
+    )
+    started_at = datetime.now(timezone.utc)
+    start_clock = monotonic()
+    attempt = None
+    error = None
+    with capture_aworld_usage() as provider_calls:
+        try:
+            attempt = await platform.run(problem_id=scenario_id)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+    ended_at = datetime.now(timezone.utc)
+    verdict = load_itbench_verdict(args.verdict_json)
+    usage = _token_usage(platform)
+    if provider_calls:
+        usage["total"] = {
+            key: sum(call[key] for call in provider_calls)
+            for key in ("input_tokens", "output_tokens", "total_tokens")
+        }
+        usage["source"] = "provider_reported"
+    else:
+        usage["source"] = "agent_reported" if usage["total"]["total_tokens"] else "unavailable"
+    cost = None
+    if (usage["source"] != "unavailable"
+            and args.input_usd_per_million is not None
+            and args.output_usd_per_million is not None):
+        cost = round(
+            (usage["total"]["input_tokens"] * args.input_usd_per_million
+             + usage["total"]["output_tokens"] * args.output_usd_per_million) / 1_000_000,
+            6,
+        )
+    raw_trace = Path("res/itbench/raw") / model / f"{client.session_id}.json"
+    record = {
+        "benchmark": "ITBench", "domain": "SRE", "task_type": "mitigation",
+        "scenario_number": args.scenario_number, "task_id": scenario_id,
+        "incident": args.incident,
+        "itbench_revision": _git_revision(itbench_dir),
+        "started_at": started_at.isoformat(), "ended_at": ended_at.isoformat(),
+        "duration_seconds": round(monotonic() - start_clock, 3),
+        "configuration": {
+            "model": model, "temperature": config.llm_config.llm_temperature,
+            "max_iterations": args.max_iterations,
+            "max_context_tokens": args.max_context_tokens,
+            "max_output_tokens": args.max_output_tokens,
+            "scenario_started_by_runner": args.start_scenario,
+            "kubeconfig_path": str(kubeconfig),
+            "prometheus_url": args.prometheus_url,
+        },
+        "attempt": attempt, "submitted": client.submitted,
+        "raw_aoi_trace": str(raw_trace) if raw_trace.is_file() else None,
+        "verdict": verdict, "success": (
+            verdict.get("success", verdict.get("passed")) if verdict is not None else None
+        ),
+        "tool_calls": client.tool_calls, "token_usage": usage,
+        "provider_usage_calls": provider_calls,
+        "cost_usd": cost,
+        "cost_note": (
+            None if cost is not None else
+            "Model usage unavailable; cost cannot be estimated."
+            if usage["source"] == "unavailable" else
+            "Supply model input/output prices to estimate cost."
+        ),
+        "error": error,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    if args.stop_scenario:
+        _run_scenario_target(itbench_dir, args.scenario_number, "disable-agent-access")
+        _run_scenario_target(itbench_dir, args.scenario_number, "stop-scenario")
+    return record
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run AOI on one ITBench SRE mitigation scenario")
+    parser.add_argument("--itbench-dir", type=Path, required=True)
+    parser.add_argument("--scenario-number", type=int, required=True)
+    parser.add_argument("--incident", required=True, help="Agent-visible incident text from ITBench")
+    parser.add_argument("--kubeconfig", type=Path, required=True, help="ITBench restricted agent kubeconfig")
+    parser.add_argument("--prometheus-url", help="ITBench Prometheus base URL for alerts and PromQL")
+    parser.add_argument("--model")
+    parser.add_argument("--temperature", type=float)
+    parser.add_argument("--max-iterations", type=int, default=14)
+    parser.add_argument("--max-context-tokens", type=int, default=4096)
+    parser.add_argument("--max-output-tokens", type=int, default=5000)
+    parser.add_argument("--start-scenario", action="store_true")
+    parser.add_argument("--stop-scenario", action="store_true")
+    parser.add_argument("--verdict-json", type=Path, help="JSON from ITBench grader with boolean success/passed")
+    parser.add_argument("--input-usd-per-million", type=float)
+    parser.add_argument("--output-usd-per-million", type=float)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    if args.output is None:
+        args.output = Path("res/itbench") / f"sre-{args.scenario_number}-{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}.json"
+    record = asyncio.run(run(args))
+    print(f"ITBench task record: {args.output}")
+    print(f"Submitted: {record['submitted']}; official success: {record['success']}")
+
+
+if __name__ == "__main__":
+    main()
