@@ -150,6 +150,7 @@ async def run(args: argparse.Namespace) -> dict:
         "started_at": started_at.isoformat(), "ended_at": ended_at.isoformat(),
         "duration_seconds": round(monotonic() - start_clock, 3),
         "configuration": {
+            **llm_config.backend_identity(),
             "model": model, "temperature": config.llm_config.llm_temperature,
             "max_iterations": args.max_iterations,
             "max_context_tokens": args.max_context_tokens,

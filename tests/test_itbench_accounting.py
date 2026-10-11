@@ -125,6 +125,36 @@ class ResumeTest(unittest.TestCase):
         for path in files:
             self.assertEqual(path.read_text(), 'previous run evidence')
 
+    def test_manifest_records_backend_and_resume_blocks_changed_endpoint_before_deployment(self):
+        batch = Batch.__new__(Batch)
+        batch.root, batch.itbench = self.aoi, self.itbench
+        batch.output = self.root / 'backend-output'
+        batch.cases = [{'scenario_number': 16}]
+        batch.env = {}
+        batch.args = argparse.Namespace(model='Qwen/Qwen3-14B', input_usd_per_million=None,
+                                        output_usd_per_million=None, settle_seconds=30, model_timeout=1800)
+        first = {'api_source': 'openai', 'llm_provider': 'openai', 'api_base': 'http://localhost:8000/v1'}
+        with patch.object(batch, 'check_cluster'), patch.object(batch, 'phase'), \
+             patch('benchmarks.itbench.batch.model_backend_identity', return_value=first), \
+             patch.object(batch, 'make', side_effect=RuntimeError('stop before deployment')):
+            with self.assertRaisesRegex(RuntimeError, 'stop before deployment'):
+                batch.execute()
+        manifest = batch.output / 'manifest.json'
+        original = manifest.read_text()
+        saved = json.loads(original)['configuration']
+        for key, value in first.items():
+            self.assertEqual(saved[key], value)
+        self.assertEqual(batch.env['API_BASE'], first['api_base'])
+        self.assertEqual(batch.env['API_SOURCE'], first['api_source'])
+        second = {**first, 'api_base': 'http://localhost:9000/v1'}
+        with patch.object(batch, 'check_cluster'), \
+             patch('benchmarks.itbench.batch.model_backend_identity', return_value=second), \
+             patch.object(batch, 'make') as deploy:
+            with self.assertRaisesRegex(ValueError, 'configuration.*new output directory'):
+                batch.execute()
+            deploy.assert_not_called()
+        self.assertEqual(manifest.read_text(), original)
+
     def test_mismatch_stops_before_deployment_and_preserves_manifest(self):
         batch = Batch.__new__(Batch)
         batch.root, batch.itbench = self.aoi, self.itbench

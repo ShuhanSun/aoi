@@ -192,7 +192,8 @@ and `--output-usd-per-million` using the rates for your provider and model.
 Rates must be finite and nonnegative; zero is an explicit zero price, not unknown.
 The batch saves those rates in its manifest and forwards them to each task.
 
-Resuming requires identical configuration, catalog, AOI and ITBench commit IDs,
+Resuming requires identical configuration (including effective `api_source`,
+`llm_provider`, and `api_base`), catalog, AOI and ITBench commit IDs,
 and SHA-256 hashes of both repositories' tracked changes (`git diff --binary HEAD`,
 including staged changes). A mismatch or an older manifest missing these fields
 requires a new `--output` directory. Rejected resumes preserve the existing
@@ -213,3 +214,12 @@ Existing top-level `success_rate`, `mean_duration_seconds`, `mean_tool_calls`,
 Top-level token/cost totals and `priced_attempts` still cover all input records.
 Thus execution statistics do not turn submissions or ungraded attempts into
 successes or failures, and cost means disclose the number of priced attempts.
+
+Backend identity is resolved through `llm_config.py`, using the same `.env`,
+environment overrides, and defaults as the task runner. With an empty `API_BASE`,
+the recorded endpoint follows AWorld's `OPENAI_ENDPOINT`/OpenAI default fallback.
+Changing `API_SOURCE` or the effective endpoint requires a new output directory,
+even with the same model name. The checked source and endpoint are pinned in
+the task subprocess environment and also recorded in each task configuration.
+API keys are never included in backend identity; rotating a key alone does not
+change the manifest.

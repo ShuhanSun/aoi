@@ -88,6 +88,13 @@ def catalog(itbench_dir):
     return cases
 
 
+def model_backend_identity():
+    # Load the same .env/defaults as the task runner; keep CLI help/catalog usable
+    # without importing the LLM runtime. Never serialize the full model config.
+    import llm_config
+    return llm_config.backend_identity()
+
+
 def experiment_provenance(aoi_dir, itbench_dir):
     """Fingerprint committed code and tracked local changes before running tasks."""
     result = {}
@@ -282,7 +289,8 @@ class Batch:
         self.output.mkdir(parents=True, exist_ok=True)
         self.check_cluster()
         manifest_path = self.output / "manifest.json"
-        configuration = {"model": self.args.model, "temperature": 0, "max_iterations": 14,
+        backend = model_backend_identity()
+        configuration = {**backend, "model": self.args.model, "temperature": 0, "max_iterations": 14,
                          "max_context_tokens": 4096, "max_output_tokens": 5000,
                          "input_usd_per_million": self.args.input_usd_per_million,
                          "output_usd_per_million": self.args.output_usd_per_million,
@@ -297,6 +305,9 @@ class Batch:
         else:
             write_json(manifest_path, {"configuration": configuration, "cases": self.cases,
                                       **provenance})
+        # Pin the checked endpoint/source for subprocesses, even if .env changes
+        # during the suite. Credentials stay in environment/.env, not the manifest.
+        self.env.update(API_SOURCE=backend["api_source"], API_BASE=backend["api_base"])
         self.manifest_validated = True
         write_json(self.output / "pid.json", {"pid": os.getpid(), "started_at": timestamp()})
         self.phase("preflight")
