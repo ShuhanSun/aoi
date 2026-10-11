@@ -33,13 +33,13 @@ From this AOI checkout:
   --scenario-number 1 \
   --incident 'Investigate and resolve the active SRE incident' \
   --kubeconfig /absolute/path/to/restricted-kubeconfig \
-  --prometheus-url http://prometheus.example:9090 \
-  --model gpt-4o-mini
+  --prometheus-url http://prometheus.example:9090
 ```
 
 `--prometheus-url` is optional. If supplied, AOI may use `get_alerts()` and
 `query_prometheus('PromQL')`. Kubernetes commands use
 `exec_shell('kubectl ...')`; the adapter injects the restricted kubeconfig.
+The runner uses `gpt-4o-mini` by default; use `--model` only to override it.
 Probe rejects state-changing kubectl verbs. The scenario can also be started
 with `--start-scenario`, which calls ITBench's `start-scenario` and
 `enable-agent-access` Make targets after its checkout has been configured.

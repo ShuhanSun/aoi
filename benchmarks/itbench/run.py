@@ -17,6 +17,8 @@ from benchmarks.itbench.client import ITBenchEnvironmentClient, load_itbench_ver
 from main import AIOPlatform
 from utils.aworld_usage_capture import capture_aworld_usage
 
+DEFAULT_MODEL = "gpt-4o-mini"
+
 
 def _configure_model(model: str, temperature: float | None):
     if llm_config.API_SOURCE != "openai":
@@ -30,16 +32,11 @@ def _configure_model(model: str, temperature: float | None):
     if getattr(original, "_itbench_compat", False) is not True:
         def get_openai_params(self, *args, **kwargs):
             params = original(self, *args, **kwargs)
-            params = {key: value for key, value in params.items() if value is not None}
-            if params.get("model", "").startswith("gpt-5.6-") and "max_tokens" in params:
-                params["max_completion_tokens"] = params.pop("max_tokens")
-            return params
+            return {key: value for key, value in params.items() if value is not None}
 
         get_openai_params._itbench_compat = True
         OpenAIProvider.get_openai_params = get_openai_params
 
-    if model.startswith("gpt-5.6-"):
-        temperature = 1.0
     return llm_config.create_llm_config(
         model=model, temperature=temperature, disable_thinking=False,
     )
@@ -92,7 +89,7 @@ async def run(args: argparse.Namespace) -> dict:
     client = ITBenchEnvironmentClient(
         scenario_id, args.incident, kubeconfig, args.prometheus_url,
     )
-    model = args.model or llm_config.MODEL
+    model = args.model or DEFAULT_MODEL
     config = _configure_model(model, args.temperature)
     platform = AIOPlatform(
         llm_config=config, env_client=client,
@@ -177,7 +174,7 @@ def main() -> None:
     parser.add_argument("--incident", required=True, help="Agent-visible incident text from ITBench")
     parser.add_argument("--kubeconfig", type=Path, required=True, help="ITBench restricted agent kubeconfig")
     parser.add_argument("--prometheus-url", help="ITBench Prometheus base URL for alerts and PromQL")
-    parser.add_argument("--model")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"model (default: {DEFAULT_MODEL})")
     parser.add_argument("--temperature", type=float)
     parser.add_argument("--max-iterations", type=int, default=14)
     parser.add_argument("--max-context-tokens", type=int, default=4096)
