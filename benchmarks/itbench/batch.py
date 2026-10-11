@@ -318,8 +318,10 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", default="gpt-4o-mini", choices=["gpt-4o-mini"])
     parser.add_argument("--uv-command", default="uvx --system-certs --from uv==0.12.24 uv")
-    parser.add_argument("--itbench-python", default="/Users/shuhsun/.local/bin/python3.13")
-    parser.add_argument("--docker-config", default="/private/tmp/aoi-public-oci")
+    parser.add_argument("--itbench-python", default=os.environ.get("UV_PYTHON"),
+                        help="ITBench Python executable (or UV_PYTHON environment variable)")
+    parser.add_argument("--docker-config", default=os.environ.get("DOCKER_CONFIG"),
+                        help="Docker config directory (or DOCKER_CONFIG environment variable)")
     parser.add_argument("--prometheus-port", type=int, default=19090)
     parser.add_argument("--settle-seconds", type=int, default=30)
     parser.add_argument("--model-timeout", type=int, default=1800)
@@ -330,6 +332,8 @@ def main():
     if args.list:
         print(json.dumps(catalog(args.itbench_dir.resolve()), indent=2))
         return
+    if not args.itbench_python or not args.docker_config:
+        parser.error("provide --itbench-python and --docker-config (or set UV_PYTHON and DOCKER_CONFIG)")
     args.output.mkdir(parents=True, exist_ok=True)
     with (args.output / "batch.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

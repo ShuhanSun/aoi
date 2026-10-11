@@ -139,8 +139,12 @@ failures remain in the suite ledger rather than becoming model failures.
 .venv/bin/python -m benchmarks.itbench.batch \
   --itbench-dir /absolute/path/to/ITBench \
   --admin-kubeconfig res/itbench/runtime/kind-dev-admin.yaml \
+  --itbench-python /absolute/path/to/ITBench/.venv/bin/python \
+  --docker-config /absolute/path/to/docker-config \
   --output res/itbench/full-library-gpt-4o-mini
 ```
+
+You can set `UV_PYTHON` and `DOCKER_CONFIG` instead of passing those two options.
 
 Resume with the same command and output directory. Completed cases are skipped;
 `--retry-environment-errors` retries setup failures while preserving their earlier
@@ -154,6 +158,3 @@ NetworkPolicy faults need enforcement beyond Kind's default CNI. The tested
 keeps the existing CNI and kube-proxy. Its temporary-pod integration test confirmed
 allow → deny → allow. The upstream scenario-31 injector is patched to use
 `ingress: []`; an ingress rule with an empty ports list allows all ports.
-
-A redacted record and report from a three-attempt local run of archived SRE
-scenario 1 are available in [reports/itbench/2026-10-10-sre-1](../reports/itbench/2026-10-10-sre-1/report.md).
