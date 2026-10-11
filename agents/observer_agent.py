@@ -207,8 +207,12 @@ class ObserverAgent(BaseAgent):
         tasks = []
 
         # 根据max_iterations动态分配任务
-        probe_count = max(1, self.max_iterations // 2)
-        executor_count = max(0, self.max_iterations - probe_count - 1)
+        if self.task_type in {"detection", "localization", "analysis"}:
+            probe_count = self.max_iterations - 1
+            executor_count = 0
+        else:
+            probe_count = max(1, self.max_iterations // 2)
+            executor_count = max(0, self.max_iterations - probe_count - 1)
 
         # 探测任务
         for i in range(probe_count):
@@ -511,6 +515,8 @@ class ObserverAgent(BaseAgent):
             next_agent = "complete"
         if not next_agent:
             next_agent = current_subtask.target_agent.value if current_subtask.target_agent else "probe"
+        if self.task_type in {"detection", "localization", "analysis"} and next_agent == "executor":
+            next_agent = "probe"
 
         # 构建指令
         instruction = f"""
