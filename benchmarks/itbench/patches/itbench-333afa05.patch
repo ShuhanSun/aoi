@@ -41,6 +41,36 @@ index 8133ebc9..7ffaa548 100644
 -        ingress:
 -          - ports: []
 +        ingress: []
+diff --git a/scenarios/sre/project/roles/faults/tasks/inject_priority_kubernetes_workload_priority_preemption.yaml b/scenarios/sre/project/roles/faults/tasks/inject_priority_kubernetes_workload_priority_preemption.yaml
+index 910493a4..f5b8b120 100644
+--- a/scenarios/sre/project/roles/faults/tasks/inject_priority_kubernetes_workload_priority_preemption.yaml
++++ b/scenarios/sre/project/roles/faults/tasks/inject_priority_kubernetes_workload_priority_preemption.yaml
+@@ -60,0 +61,5 @@
++            containers:
++              - name: "{{ faults_kubernetes_object.spec.template.spec.containers[0].name }}"
++                resources:
++                  requests:
++                    cpu: "1"
+@@ -115 +120 @@
+-    wait: true
++    wait: false
+@@ -117,0 +123,16 @@
++
++# Saturation intentionally leaves some high-priority pods pending. Verify the
++# intended preemption instead of waiting for an impossible full rollout.
++- name: Wait for target workload to lose availability after preemption
++  kubernetes.core.k8s_info:
++    api_version: "{{ faults_kubernetes_object.apiVersion }}"
++    kubeconfig: "{{ faults_cluster.kubeconfig }}"
++    kind: "{{ faults_kubernetes_object.kind }}"
++    name: "{{ faults_kubernetes_object.metadata.name }}"
++    namespace: "{{ faults_kubernetes_object.metadata.namespace }}"
++  register: faults_preempted_workload
++  until:
++    - faults_preempted_workload.resources | ansible.builtin.length == 1
++    - (faults_preempted_workload.resources[0].status.availableReplicas | default(0)) < (faults_preempted_workload.resources[0].spec.replicas | default(1))
++  delay: 5
++  retries: 24
 diff --git a/scenarios/sre/project/roles/faults/tasks/validate_fault_arguments.yaml b/scenarios/sre/project/roles/faults/tasks/validate_fault_arguments.yaml
 index b474bb31..81cb4062 100644
 --- a/scenarios/sre/project/roles/faults/tasks/validate_fault_arguments.yaml

@@ -245,7 +245,9 @@ class Batch:
             directory = self.output / f"scenarios/{number}"
             if (directory / "case.json").is_file():
                 old = json.loads((directory / "case.json").read_text())
-                if old["status"] != "environment_error" or not self.args.retry_environment_errors:
+                retry_numbers = self.args.retry_scenario_number
+                if (old["status"] != "environment_error" or not self.args.retry_environment_errors
+                        or (retry_numbers and number not in retry_numbers)):
                     self.progress["completed"].append(number)
                     continue
                 history = directory / "history"
@@ -279,7 +281,7 @@ class Batch:
                 self.command([sys.executable, "-u", "-m", "benchmarks.itbench.run",
                               "--itbench-dir", str(self.itbench), "--scenario-number", str(number),
                               "--incident", case["incident"], "--kubeconfig", str(access),
-                              "--prometheus-url", f"http://127.0.0.1:{self.args.prometheus_port}",
+                              "--prometheus-url", f"http://127.0.0.1:{self.args.prometheus_port}/prometheus",
                               "--model", self.args.model, "--temperature", "0", "--max-iterations", "14",
                               "--input-usd-per-million", "0.15", "--output-usd-per-million", "0.60",
                               "--output", str(directory / "task.json")],
@@ -322,6 +324,7 @@ def main():
     parser.add_argument("--settle-seconds", type=int, default=30)
     parser.add_argument("--model-timeout", type=int, default=1800)
     parser.add_argument("--retry-environment-errors", action="store_true", help="Retry setup/injection errors on resume; preserve their earlier case ledgers")
+    parser.add_argument("--retry-scenario-number", type=int, action="append", help="Limit environment retries to scenarios with a concrete setup fix")
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
     if args.list:
