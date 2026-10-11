@@ -28,7 +28,7 @@ external evaluation is complete.
 From this AOI checkout:
 
 ```sh
-.venv/bin/python -m main_itbench \
+.venv/bin/python -m benchmarks.itbench.run \
   --itbench-dir /absolute/path/to/ITBench \
   --scenario-number 1 \
   --incident 'Investigate and resolve the active SRE incident' \
@@ -59,7 +59,7 @@ a JSON object containing a boolean `success` or `passed`. Supply its path with
 without rerunning the agent:
 
 ```sh
-.venv/bin/python -m attach_itbench_verdict \
+.venv/bin/python -m benchmarks.itbench.verdict \
   res/itbench/sre-1-<timestamp>.json /absolute/path/to/itbench-verdict.json
 ```
 
@@ -70,7 +70,7 @@ success rates.
 After grading, summarize all local attempts with:
 
 ```sh
-.venv/bin/python -m summarize_itbench res/itbench --output res/itbench/summary.json
+.venv/bin/python -m benchmarks.itbench.summary res/itbench --output res/itbench/summary.json
 ```
 
 The summary counts unverified attempts separately and computes success rate

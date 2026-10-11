@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from attach_itbench_verdict import attach_verdict
-from environment.itbench_client import ITBenchEnvironmentClient, load_itbench_verdict
-from summarize_itbench import summarize
+from benchmarks.itbench.verdict import attach_verdict
+from benchmarks.itbench.client import ITBenchEnvironmentClient, load_itbench_verdict
+from benchmarks.itbench.summary import summarize
 from utils.aworld_usage_capture import capture_aworld_usage
 from utils.llm_usage import usage_from_result
 
@@ -23,7 +23,7 @@ class ITBenchEnvironmentClientTest(unittest.TestCase):
     def tearDown(self):
         self.directory.cleanup()
 
-    @patch("environment.itbench_client.subprocess.run")
+    @patch("benchmarks.itbench.client.subprocess.run")
     def test_probe_uses_restricted_kubeconfig(self, run):
         run.return_value.returncode = 0
         run.return_value.stdout = "pod-a Running\n"
@@ -35,7 +35,7 @@ class ITBenchEnvironmentClientTest(unittest.TestCase):
             ["kubectl", "--kubeconfig", str(self.kubeconfig.resolve()), "get", "pods", "-n", "app"],
         )
 
-    @patch("environment.itbench_client.subprocess.run")
+    @patch("benchmarks.itbench.client.subprocess.run")
     def test_probe_rejects_changes_and_context_override(self, run):
         self.assertIn("Probe cannot", self.client.execute_probe_action(
             "exec_shell('kubectl delete pod pod-a')"))
@@ -49,7 +49,7 @@ class ITBenchEnvironmentClientTest(unittest.TestCase):
         self.assertTrue(self.client.submitted)
         self.assertFalse(self.client.is_problem_solved())
 
-    @patch("environment.itbench_client.urlopen")
+    @patch("benchmarks.itbench.client.urlopen")
     def test_prometheus_alerts_use_configured_endpoint(self, urlopen):
         client = ITBenchEnvironmentClient(
             "itbench-sre-1-mitigation-1", "Resolve alert", self.kubeconfig,
