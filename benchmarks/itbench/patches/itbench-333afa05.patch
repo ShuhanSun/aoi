@@ -33,6 +33,14 @@ index 69695202..fdc3c65e 100644
 @@ -172 +172 @@
 -                  - spanmetrics
 +                  - span_metrics
+diff --git a/scenarios/sre/project/roles/faults/tasks/inject_ingress_port_blocking_network_policy.yaml b/scenarios/sre/project/roles/faults/tasks/inject_ingress_port_blocking_network_policy.yaml
+index 8133ebc9..7ffaa548 100644
+--- a/scenarios/sre/project/roles/faults/tasks/inject_ingress_port_blocking_network_policy.yaml
++++ b/scenarios/sre/project/roles/faults/tasks/inject_ingress_port_blocking_network_policy.yaml
+@@ -20,2 +20 @@
+-        ingress:
+-          - ports: []
++        ingress: []
 diff --git a/scenarios/sre/project/roles/faults/tasks/validate_fault_arguments.yaml b/scenarios/sre/project/roles/faults/tasks/validate_fault_arguments.yaml
 index b474bb31..81cb4062 100644
 --- a/scenarios/sre/project/roles/faults/tasks/validate_fault_arguments.yaml

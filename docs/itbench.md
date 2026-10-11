@@ -121,5 +121,39 @@ After grading, summarize all local attempts with:
 The summary counts unverified attempts separately and computes success rate
 only over externally graded attempts.
 
+## Full library SRE suite
+
+`benchmarks.itbench.batch` selects all SRE scenarios in the pinned
+`library/scenarios` catalog (31 in the validated checkout). The current upstream
+Make/Ansible injector uses `archive/scenarios`; the batch checks matching fault
+IDs and Kubernetes targets, and saves both definitions' hashes. Fault metadata
+and ground truth are not included in agent incidents.
+
+Each scenario uses fresh application namespaces on `kind-dev`. The runner
+checks the admin context, node names, and ITBench inventory before cleanup.
+Model settings are fixed to gpt-4o-mini, temperature 0, and 14 iterations.
+Deployment, injection, model, and cleanup logs are saved separately. Setup
+failures remain in the suite ledger rather than becoming model failures.
+
+```sh
+.venv/bin/python -m benchmarks.itbench.batch \
+  --itbench-dir /absolute/path/to/ITBench \
+  --admin-kubeconfig res/itbench/runtime/kind-dev-admin.yaml \
+  --output res/itbench/full-library-gpt-4o-mini
+```
+
+Resume with the same command and output directory. Completed cases are skipped;
+`--retry-environment-errors` retries setup failures while preserving their earlier
+ledgers. `progress.json` records the active scenario/phase, while `summary.json`
+and `report.md` track finished cases. Completion or a blocked batch produces
+`results.zip`, excluding credentials. Each model attempt retains full task-level
+configuration, tools, provider usage, timing, and estimated cost.
+
+NetworkPolicy faults need enforcement beyond Kind's default CNI. The tested
+[policy-only kube-router configuration](../benchmarks/itbench/manifests/kube-router-policy.yaml)
+keeps the existing CNI and kube-proxy. Its temporary-pod integration test confirmed
+allow → deny → allow. The upstream scenario-31 injector is patched to use
+`ingress: []`; an ingress rule with an empty ports list allows all ports.
+
 A redacted record and report from a three-attempt local run of archived SRE
 scenario 1 are available in [reports/itbench/2026-10-10-sre-1](../reports/itbench/2026-10-10-sre-1/report.md).
