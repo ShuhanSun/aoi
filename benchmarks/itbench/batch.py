@@ -21,6 +21,7 @@ import yaml
 
 from benchmarks.itbench.summary import summarize
 from benchmarks.itbench.review import review_directory
+from benchmarks.itbench.pricing import add_pricing_arguments, validate_prices
 
 
 APP_NAMESPACES = {"opentelemetry-demo": "otel-demo", "book-info": "book-info"}
@@ -87,6 +88,29 @@ def catalog(itbench_dir):
     return cases
 
 
+def experiment_provenance(aoi_dir, itbench_dir):
+    """Fingerprint committed code and tracked local changes before running tasks."""
+    result = {}
+    for name, directory in (("aoi", aoi_dir), ("itbench", itbench_dir)):
+        result[f"{name}_revision"] = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=directory, text=True).strip()
+        patch = subprocess.check_output(["git", "diff", "--binary", "HEAD"], cwd=directory)
+        result[f"{name}_patch_sha256"] = hashlib.sha256(patch).hexdigest()
+    return result
+
+
+def validate_resume(previous, configuration, cases, provenance):
+    changed = [key for key, value in provenance.items()
+               if key not in previous or previous[key] != value]
+    if previous.get("configuration") != configuration:
+        changed.append("configuration")
+    if previous.get("cases") != cases:
+        changed.append("catalog")
+    if changed:
+        raise ValueError("Resume mismatch: " + ", ".join(changed)
+                         + "; use a new output directory (--output). Existing results are preserved.")
+
+
 class StageError(RuntimeError):
     pass
 
@@ -107,6 +131,7 @@ class Batch:
                          "total_scenarios": len(self.cases), "current_scenario": None,
                          "phase": "preflight", "phase_started_at": timestamp(), "completed": []}
         self.forward = None
+        self.manifest_validated = False
 
     def phase(self, name, number=None):
         self.progress.update(phase=name, current_scenario=number, phase_started_at=timestamp())
@@ -240,25 +265,39 @@ class Batch:
                     if path.is_file() and path.name not in {"results.zip", "restricted-kubeconfig", "access.log", "batch.lock"}:
                         archive.write(path, str(path.relative_to(self.output)))
 
+    def model_command(self, case, access, directory):
+        command = [sys.executable, "-u", "-m", "benchmarks.itbench.run",
+                   "--itbench-dir", str(self.itbench), "--scenario-number", str(case["scenario_number"]),
+                   "--incident", case["incident"], "--kubeconfig", str(access),
+                   "--prometheus-url", f"http://127.0.0.1:{self.args.prometheus_port}/prometheus",
+                   "--model", self.args.model, "--temperature", "0", "--max-iterations", "14",
+                   "--output", str(directory / "task.json")]
+        validate_prices(self.args.input_usd_per_million, self.args.output_usd_per_million)
+        if self.args.input_usd_per_million is not None:
+            command.extend(["--input-usd-per-million", str(self.args.input_usd_per_million),
+                            "--output-usd-per-million", str(self.args.output_usd_per_million)])
+        return command
+
     def execute(self):
         self.output.mkdir(parents=True, exist_ok=True)
         self.check_cluster()
         manifest_path = self.output / "manifest.json"
         configuration = {"model": self.args.model, "temperature": 0, "max_iterations": 14,
                          "max_context_tokens": 4096, "max_output_tokens": 5000,
-                         "input_usd_per_million": 0.15, "output_usd_per_million": 0.60,
+                         "input_usd_per_million": self.args.input_usd_per_million,
+                         "output_usd_per_million": self.args.output_usd_per_million,
                          "settle_seconds": self.args.settle_seconds, "model_timeout_seconds": self.args.model_timeout,
                          "catalog": "library", "admin_context": "kind-kind-dev",
                          "submission_policy": "agent_decides", "prometheus_route_prefix": "/prometheus"}
+        validate_prices(self.args.input_usd_per_million, self.args.output_usd_per_million)
+        provenance = experiment_provenance(self.root, self.itbench)
         if manifest_path.exists():
             previous = json.loads(manifest_path.read_text())
-            if previous["configuration"] != configuration or previous["cases"] != self.cases:
-                raise ValueError("Resume configuration or catalog differs from the saved suite")
+            validate_resume(previous, configuration, self.cases, provenance)
         else:
             write_json(manifest_path, {"configuration": configuration, "cases": self.cases,
-                       "aoi_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip(),
-                       "itbench_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.itbench, text=True).strip(),
-                       "itbench_patch_sha256": hashlib.sha256(subprocess.check_output(["git", "diff", "HEAD"], cwd=self.itbench)).hexdigest()})
+                                      **provenance})
+        self.manifest_validated = True
         write_json(self.output / "pid.json", {"pid": os.getpid(), "started_at": timestamp()})
         self.phase("preflight")
         self.make("deploy-tools", self.cases[0]["scenario_number"], self.output / "preflight.log", 1800)
@@ -305,13 +344,7 @@ class Batch:
                 self.snapshot(case, directory, "injected.json")
                 self.phase("model", number)
                 ledger["status"] = "model_error"
-                self.command([sys.executable, "-u", "-m", "benchmarks.itbench.run",
-                              "--itbench-dir", str(self.itbench), "--scenario-number", str(number),
-                              "--incident", case["incident"], "--kubeconfig", str(access),
-                              "--prometheus-url", f"http://127.0.0.1:{self.args.prometheus_port}/prometheus",
-                              "--model", self.args.model, "--temperature", "0", "--max-iterations", "14",
-                              "--input-usd-per-million", "0.15", "--output-usd-per-million", "0.60",
-                              "--output", str(directory / "task.json")],
+                self.command(self.model_command(case, access, directory),
                              directory / "model.log", self.args.model_timeout)
                 record = json.loads((directory / "task.json").read_text())
                 if record.get("raw_aoi_trace"):
@@ -339,12 +372,13 @@ class Batch:
         self.report()
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--itbench-dir", type=Path, required=True)
     parser.add_argument("--admin-kubeconfig", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--model", default="gpt-4o-mini", choices=["gpt-4o-mini"])
+    parser.add_argument("--model", default="gpt-4o-mini")
+    add_pricing_arguments(parser)
     parser.add_argument("--uv-command", default="uvx --system-certs --from uv==0.12.24 uv")
     parser.add_argument("--itbench-python", default=os.environ.get("UV_PYTHON"),
                         help="ITBench Python executable (or UV_PYTHON environment variable)")
@@ -356,7 +390,16 @@ def main():
     parser.add_argument("--retry-environment-errors", action="store_true", help="Retry setup/injection errors on resume; preserve their earlier case ledgers")
     parser.add_argument("--retry-scenario-number", type=int, action="append", help="Limit environment retries to scenarios with a concrete setup fix")
     parser.add_argument("--list", action="store_true")
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
+    try:
+        validate_prices(args.input_usd_per_million, args.output_usd_per_million)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.list:
         print(json.dumps(catalog(args.itbench_dir.resolve()), indent=2))
         return
@@ -369,9 +412,10 @@ def main():
         try:
             batch.execute()
         except (Exception, KeyboardInterrupt) as exc:
-            batch.progress.update(state="blocked", error=f"{type(exc).__name__}: {exc}")
-            write_json(args.output / "progress.json", batch.progress)
-            batch.report()
+            if batch.manifest_validated:
+                batch.progress.update(state="blocked", error=f"{type(exc).__name__}: {exc}")
+                write_json(args.output / "progress.json", batch.progress)
+                batch.report()
             raise
         finally:
             if batch.forward is not None and batch.forward.poll() is None:

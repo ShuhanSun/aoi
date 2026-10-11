@@ -1,4 +1,4 @@
-"""Summarize externally graded ITBench AOI task records."""
+"""Summarize execution costs for all task records and success for graded records."""
 
 import argparse
 import json
@@ -10,7 +10,23 @@ def summarize(records: list[dict]) -> dict:
     completed = [r for r in verified if r["success"]]
     def average(values):
         return round(sum(values) / len(values), 4) if values else None
+    # Input records are model attempts, not case/environment-setup ledgers.
+    # Missing usage is unknown, not zero. Coverage is the number of observations.
+    durations = [r["duration_seconds"] for r in records
+                 if isinstance(r.get("duration_seconds"), (int, float))]
+    calls = [len(r["tool_calls"]) for r in records if isinstance(r.get("tool_calls"), list)]
+    tokens = [(r.get("token_usage") or {}).get("total", {}).get("total_tokens")
+              for r in records if (r.get("token_usage") or {}).get("source") != "unavailable"]
+    tokens = [value for value in tokens if isinstance(value, (int, float))]
+    costs = [r["cost_usd"] for r in records if isinstance(r.get("cost_usd"), (int, float))]
     return {
+        "execution_stats": {
+            "attempts": len(records),
+            "mean_duration_seconds": average(durations), "duration_coverage": len(durations),
+            "mean_tool_calls": average(calls), "tool_calls_coverage": len(calls),
+            "mean_total_tokens": average(tokens), "token_coverage": len(tokens),
+            "mean_cost_usd": average(costs), "cost_coverage": len(costs),
+        },
         "benchmark": "ITBench", "domain": "SRE",
         "total_attempts": len(records), "verified_attempts": len(verified),
         "unverified_attempts": len(records) - len(verified),

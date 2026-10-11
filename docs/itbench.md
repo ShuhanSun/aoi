@@ -132,7 +132,8 @@ and ground truth are not included in agent incidents.
 
 Each scenario uses fresh application namespaces on `kind-dev`. The runner
 checks the admin context, node names, and ITBench inventory before cleanup.
-Model settings are fixed to gpt-4o-mini, temperature 0, and 14 iterations.
+The default model is gpt-4o-mini; override it with `--model`. Temperature 0
+and the 14-iteration budget remain fixed.
 Deployment, injection, model, and cleanup logs are saved separately. Setup
 failures remain in the suite ledger rather than becoming model failures.
 
@@ -178,3 +179,37 @@ and Istio policies are included in new snapshots. Official success stays null.
 The public ITBench-Evaluations toolkit evaluates RCA agent outputs rather than
 providing an online SRE mitigation grader. The corrected testing protocol uses
 a new output directory; the original suite and its limitations are preserved.
+
+## Model pricing, resume identity, and ungraded execution statistics
+
+The batch runner accepts any model name supported by the configured provider,
+including `--model Qwen/Qwen3-14B`. Configure the provider/API endpoint separately
+as for the single-task runner; this option does not start a local model server.
+The default model remains `gpt-4o-mini`. Neither runner assumes prices from the
+model name. Omit both pricing flags to keep `cost_usd: null`, including for local
+Qwen runs. To estimate cost, explicitly supply both `--input-usd-per-million`
+and `--output-usd-per-million` using the rates for your provider and model.
+Rates must be finite and nonnegative; zero is an explicit zero price, not unknown.
+The batch saves those rates in its manifest and forwards them to each task.
+
+Resuming requires identical configuration, catalog, AOI and ITBench commit IDs,
+and SHA-256 hashes of both repositories' tracked changes (`git diff --binary HEAD`,
+including staged changes). A mismatch or an older manifest missing these fields
+requires a new `--output` directory. Rejected resumes preserve the existing
+manifest, progress, summaries, and task records. Untracked files and installed
+dependencies are not fingerprinted: commit experiment code and separately pin
+runtime dependencies before collecting comparable results.
+
+`summary.json.execution_stats` describes **all saved model task records**,
+including ungraded and failed model attempts, but not environment-only case
+ledgers. It reports `attempts`, `mean_duration_seconds`, `mean_tool_calls`,
+`mean_total_tokens`, and `mean_cost_usd`, with per-metric `*_coverage` counts.
+Missing measurements are excluded from their respective means; an empty sample
+has a null mean. Explicit zero measurements remain included. These statistics
+are still available when every official verdict is null.
+
+Existing top-level `success_rate`, `mean_duration_seconds`, `mean_tool_calls`,
+`mean_cost_usd`, and `cost_coverage` retain their graded-only definitions.
+Top-level token/cost totals and `priced_attempts` still cover all input records.
+Thus execution statistics do not turn submissions or ungraded attempts into
+successes or failures, and cost means disclose the number of priced attempts.

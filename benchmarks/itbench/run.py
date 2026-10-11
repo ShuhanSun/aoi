@@ -16,6 +16,7 @@ from time import monotonic
 import llm_config
 from benchmarks.itbench.client import ITBenchEnvironmentClient, load_itbench_verdict
 from benchmarks.itbench.verify import verify
+from benchmarks.itbench.pricing import add_pricing_arguments, estimate_cost, validate_prices
 from main import AIOPlatform
 from utils.aworld_usage_capture import capture_aworld_usage
 
@@ -79,6 +80,7 @@ def _token_usage(platform: AIOPlatform) -> dict:
 
 
 async def run(args: argparse.Namespace) -> dict:
+    validate_prices(args.input_usd_per_million, args.output_usd_per_million)
     if args.scenario_number < 1:
         raise ValueError("scenario-number must be positive")
     scenario_id = f"itbench-sre-{args.scenario_number}-mitigation-1"
@@ -126,15 +128,7 @@ async def run(args: argparse.Namespace) -> dict:
         usage["source"] = "provider_reported"
     else:
         usage["source"] = "agent_reported" if usage["total"]["total_tokens"] else "unavailable"
-    cost = None
-    if (usage["source"] != "unavailable"
-            and args.input_usd_per_million is not None
-            and args.output_usd_per_million is not None):
-        cost = round(
-            (usage["total"]["input_tokens"] * args.input_usd_per_million
-             + usage["total"]["output_tokens"] * args.output_usd_per_million) / 1_000_000,
-            6,
-        )
+    cost = estimate_cost(usage, args.input_usd_per_million, args.output_usd_per_million)
     raw_trace = Path("res/itbench/raw") / model / f"{client.session_id}.json"
     patch_result = subprocess.run(["git", "-C", str(itbench_dir), "diff", "HEAD"],
                                   capture_output=True, check=True)
@@ -207,8 +201,7 @@ def main() -> None:
     parser.add_argument("--stop-scenario", action="store_true")
     parser.add_argument("--verdict-json", type=Path, help="JSON from ITBench grader with boolean success/passed")
     parser.add_argument("--local-verify", action="store_true", help="Check archived scenario 1 locally; never sets official success")
-    parser.add_argument("--input-usd-per-million", type=float)
-    parser.add_argument("--output-usd-per-million", type=float)
+    add_pricing_arguments(parser)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.output is None:
