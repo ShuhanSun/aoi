@@ -15,14 +15,25 @@ class SubmissionTest(unittest.IsolatedAsyncioTestCase):
         platform.observer = MagicMock()
         platform.observer.analyze_and_decide = AsyncMock(return_value={'submission_command': 'submit()'})
         platform.memory_manager = MagicMock()
-        platform.execution_results = {'iterations': []}
-        platform.execute_action = MagicMock(return_value={'error': True, 'result': 'Repair and verify first'})
+        platform.execution_results = {'iterations': [], 'observer_outputs': []}
+        # Use the real platform wrapper: it converts environment errors to strings.
+        platform.env_client.execute_action.return_value = {'error': True, 'result': 'Repair and verify first'}
         task = platform.observer.get_current_subtask.return_value
         task.is_submit_task = True
         result = await platform.run_iteration(1)
         self.assertNotEqual(result.get('status'), 'completed')
         task.complete_execution.assert_not_called()
         self.assertIn('Repair and verify', platform.observer.previous_iteration_context)
+
+        # Also cover an early completion decision on an ordinary repair task.
+        task.is_submit_task = False
+        platform.observer.analyze_and_decide.return_value = {
+            'next_agent': 'complete', 'current_subtask': task,
+            'submission_command': 'submit()',
+        }
+        result = await platform.run_iteration(2)
+        self.assertNotEqual(result.get('status'), 'completed')
+        task.complete_execution.assert_not_called()
 
 
 class ExecutorTest(unittest.TestCase):

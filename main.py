@@ -246,7 +246,7 @@ class AIOPlatform:
                             "result": str(submit_result)
                         })
 
-                        if isinstance(submit_result, dict) and submit_result.get("error"):
+                        if (isinstance(submit_result, dict) and submit_result.get("error")) or str(submit_result).startswith("Error:"):
                             self.observer.previous_iteration_context = str(submit_result)
                             self.execution_results["iterations"].append(iteration_data)
                             return iteration_data
@@ -369,7 +369,7 @@ class AIOPlatform:
                         "result": str(submit_result)
                     })
 
-                    if isinstance(submit_result, dict) and submit_result.get("error"):
+                    if (isinstance(submit_result, dict) and submit_result.get("error")) or str(submit_result).startswith("Error:"):
                         self.observer.previous_iteration_context = str(submit_result)
                         self.execution_results["iterations"].append(iteration_data)
                         return iteration_data
