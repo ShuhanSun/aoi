@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from environment.itbench_client import load_itbench_verdict
+from benchmarks.itbench.client import load_itbench_verdict
 
 
 def attach_verdict(record_path: Path, verdict_path: Path) -> dict:

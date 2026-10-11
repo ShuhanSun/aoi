@@ -13,7 +13,7 @@ from pathlib import Path
 from time import monotonic
 
 import llm_config
-from environment.itbench_client import ITBenchEnvironmentClient, load_itbench_verdict
+from benchmarks.itbench.client import ITBenchEnvironmentClient, load_itbench_verdict
 from main import AIOPlatform
 from utils.aworld_usage_capture import capture_aworld_usage
 
