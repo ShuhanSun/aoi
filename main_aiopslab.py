@@ -762,8 +762,9 @@ async def main():
 
     args = parser.parse_args()
 
-    # 开发模式：使用代码中的配置
-    if DEV_MODE:
+    # Explicit CLI task selection takes precedence over the development batch.
+    dev_mode = DEV_MODE and not (args.problem or args.problems or args.all or args.session)
+    if dev_mode:
         print("🔧 Running in DEV MODE - using configuration from llm_config.py")
         # 使用 llm_config 模块的默认配置
         api_source = llm_config.API_SOURCE
@@ -779,17 +780,15 @@ async def main():
         llm_config_obj = llm_config.llm_config
     else:
         # 生产模式：使用命令行参数
-        api_source = args.api_source
-        if not api_source:
-            raise ValueError("Please specify --api-source (openrouter or openai)")
+        api_source = args.api_source or llm_config.API_SOURCE
         
         api_key = args.api_key or os.getenv(f"{api_source.upper()}_API_KEY")
         if not api_key:
             raise ValueError(f"{api_source.upper()}_API_KEY not found")
         
-        api_base = args.api_base
-        model = args.model
-        temperature = args.temperature or 0.7
+        api_base = args.api_base or (llm_config.API_BASE if api_source == llm_config.API_SOURCE else None)
+        model = args.model or llm_config.MODEL
+        temperature = args.temperature if args.temperature is not None else llm_config.TEMPERATURE
         max_context_tokens = args.max_context_tokens
         max_output_tokens = args.max_output_tokens
         evaluate_all = args.all
@@ -803,22 +802,25 @@ async def main():
             temperature=temperature
         )
 
+    if api_source == "openai":
+        llm_config.enable_openai_compatibility()
+
     # 显示配置信息
     print(f"\n{'='*60}")
     print(f"🤖 Model: {model}")
     print(f"🔗 API Source: {api_source}")
     if api_base:
         print(f"🌐 API Base: {api_base}")
-    print(f"🌡️  Temperature: {temperature}")
+    print(f"🌡️  Temperature: {llm_config_obj.llm_config.llm_temperature}")
     print(f"🔢 Max Context Tokens: {max_context_tokens}")
     print(f"🔢 Max Output Tokens: {max_output_tokens}")
-    if DEV_MODE and DEV_DEBUG_NO_SUBMIT:
+    if dev_mode and DEV_DEBUG_NO_SUBMIT:
         print(f"🔍 DEBUG MODE: Submission disabled (session will remain open)")
     print(f"📁 Results directory: ./res/{model}/")
     print(f"{'='*60}\n")
 
     # 创建评估器
-    debug_no_submit = DEV_DEBUG_NO_SUBMIT if DEV_MODE else False
+    debug_no_submit = DEV_DEBUG_NO_SUBMIT if dev_mode else False
     evaluator = AIOpsLabEvaluator(
         llm_config=llm_config_obj,
         server_host=args.host,
@@ -829,14 +831,14 @@ async def main():
     )
 
     # Apply exclusion list
-    if DEV_MODE and DEV_EVALUATE_ALL:
+    if dev_mode and DEV_EVALUATE_ALL:
         evaluate_all = True
     # 执行评估
 
-    if DEV_MODE and not DEV_EVALUATE_ALL and 'DEV_SPECIFIC_PROBLEMS' in globals():
+    if dev_mode and not DEV_EVALUATE_ALL and 'DEV_SPECIFIC_PROBLEMS' in globals():
         # 开发模式：运行指定的任务
         result = await evaluator.evaluate_batch(DEV_SPECIFIC_PROBLEMS, max_retries=max_retries)
-    elif DEV_MODE and evaluate_all:
+    elif dev_mode and evaluate_all:
         # 开发模式：评估所有问题
         result = await evaluator.evaluate_all_problems(
             max_retries=max_retries,

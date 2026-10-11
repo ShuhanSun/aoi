@@ -22,7 +22,7 @@ API_BASE = os.getenv("API_BASE", "https://openrouter.ai/api/v1")
 # Model configuration
 MODEL = os.getenv("MODEL", "anthropic/claude-sonnet-4.5")
 
-TEMPERATURE = 0.7
+TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
 
 # Thinking mode control (for models that support it, e.g. Qwen3)
 # True = disable thinking mode (recommended, more direct output)
@@ -69,6 +69,10 @@ def create_llm_config(
     _model = model or MODEL
     _temperature = temperature if temperature is not None else TEMPERATURE
     _disable_thinking = disable_thinking if disable_thinking is not None else DISABLE_THINKING
+    if _api_source == "openai":
+        _disable_thinking = False  # chat_template_kwargs is specific to Qwen.
+        if _model.startswith("gpt-5.6-"):
+            _temperature = 1.0
 
     # Create LLM config parameters
     llm_config_params = {
@@ -103,6 +107,25 @@ def create_llm_config(
         llm_config_params["ext"] = ext
 
     return AgentConfig(**llm_config_params)
+
+
+def enable_openai_compatibility() -> None:
+    """Omit unset optional parameters emitted by this AWorld version."""
+    from aworld.models.openai_provider import OpenAIProvider
+
+    original = OpenAIProvider.get_openai_params
+    if getattr(original, "_aiopslab_compat", False):
+        return
+
+    def get_openai_params(self, *args, **kwargs):
+        params = original(self, *args, **kwargs)
+        params = {key: value for key, value in params.items() if value is not None}
+        if params.get("model", "").startswith("gpt-5.6-") and "max_tokens" in params:
+            params["max_completion_tokens"] = params.pop("max_tokens")
+        return params
+
+    get_openai_params._aiopslab_compat = True
+    OpenAIProvider.get_openai_params = get_openai_params
 
 
 # Default global llm_config object (uses module defaults)
