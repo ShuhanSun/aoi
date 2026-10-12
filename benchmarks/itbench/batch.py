@@ -21,6 +21,8 @@ import yaml
 
 from benchmarks.itbench.summary import summarize
 from benchmarks.itbench.review import review_directory
+from benchmarks.itbench.evaluate import sample as alert_sample, verdict as alert_verdict, PROTOCOL
+from benchmarks.itbench.recover import recover_trial
 from benchmarks.itbench.pricing import add_pricing_arguments, validate_prices
 
 
@@ -237,6 +239,17 @@ class Batch:
                 state[namespace] = {"error": str(exc)}
         write_json(directory / name, state)
 
+    def collect_alerts(self, case, expected, directory, stage, predicate, timeout):
+        started = time.monotonic()
+        while True:
+            observation = alert_sample(f"http://127.0.0.1:{self.args.prometheus_port}/prometheus", case["namespaces"], expected)
+            with (directory / "alert-observations.jsonl").open("a") as stream:
+                stream.write(json.dumps({"stage": stage, **observation}) + "\n")
+            if predicate(observation) or time.monotonic() - started >= timeout:
+                write_json(directory / f"alerts-{stage}.json", observation)
+                return observation
+            time.sleep(15)
+
     def report(self):
         ledgers = [json.loads(path.read_text()) for path in sorted(self.output.glob("scenarios/*/case.json"))]
         records = [json.loads(path.read_text()) for path in sorted(self.output.glob("scenarios/*/task.json"))]
@@ -244,12 +257,18 @@ class Batch:
                    "finished_scenarios": len(ledgers),
                    "case_status_counts": dict(Counter(item["status"] for item in ledgers)),
                    "suite_state": self.progress["state"]}
+        evaluations = [r.get("mitigation_evaluation", {}) for r in records]
+        graded = [r for r in evaluations if isinstance(r.get("passed"), bool)]
+        summary["mitigation_evaluation"] = {"protocol": PROTOCOL, "official": False,
+            "graded_trials": len(graded), "passed_trials": sum(r["passed"] for r in graded),
+            "unknown_trials": len(records) - len(graded),
+            "alert_resolution_rate": sum(r["passed"] for r in graded) / len(graded) if graded else None}
         write_json(self.output / "summary.json", summary)
         rows = []
         for item in ledgers:
             path = self.output / f"scenarios/{item['scenario_number']}/task.json"
             record = json.loads(path.read_text()) if path.is_file() else {}
-            tokens = record.get("token_usage", {}).get("total", {}).get("total_tokens")
+            tokens = ((record.get("token_usage") or {}).get("total") or {}).get("total_tokens")
             rows.append(f"| {item['scenario_number']} | {item['status']} | {record.get('submitted')} | "
                         f"{record.get('success')} | {tokens} | {record.get('duration_seconds')} | {record.get('cost_usd')} |")
         report = ("# ITBench library SRE full-suite results\n\n"
@@ -297,6 +316,10 @@ class Batch:
                          "settle_seconds": self.args.settle_seconds, "model_timeout_seconds": self.args.model_timeout,
                          "catalog": "library", "admin_context": "kind-kind-dev",
                          "submission_policy": "agent_decides", "prometheus_route_prefix": "/prometheus"}
+        if getattr(self.args, "mitigation_evaluation", False):
+            configuration["mitigation_protocol"] = PROTOCOL
+            configuration["ground_truth_sha256"] = {str(c["scenario_number"]): hashlib.sha256(
+                (self.itbench / f"library/scenarios/{c['scenario_number']}/ground_truth.yaml").read_bytes()).hexdigest() for c in self.cases}
         validate_prices(self.args.input_usd_per_million, self.args.output_usd_per_million)
         provenance = experiment_provenance(self.root, self.itbench)
         if manifest_path.exists():
@@ -330,6 +353,13 @@ class Batch:
             ledger = {"scenario_number": number, "started_at": timestamp(),
                       "configuration": configuration, "status": "environment_error", "error": None}
             try:
+                expected = []
+                if getattr(self.args, "mitigation_evaluation", False):
+                    ground_truth = self.itbench / f"library/scenarios/{number}/ground_truth.yaml"
+                    expected = yaml.safe_load(ground_truth.read_text()).get("alerts", [])
+                    if not expected:
+                        ledger.update(status="excluded", error="Ground truth defines no alert criterion; no model trial")
+                        continue
                 self.cleanup(number, directory)
                 self.phase("deployment", number)
                 self.command([*shlex.split(self.args.uv_command), "run", "--directory", str(self.itbench / "scenarios/sre"),
@@ -341,6 +371,12 @@ class Batch:
                     self.command(self.kubectl("rollout", "status", "deployment", "-n", namespace, "--timeout=180s"),
                                  directory / "baseline-readiness.log", 200)
                 self.snapshot(case, directory, "baseline.json")
+                if expected:
+                    self.phase("baseline_evaluation", number)
+                    baseline_alerts = self.collect_alerts(case, expected, directory, "baseline",
+                        lambda s: s["telemetry_healthy"] and not s["alerts"], 300)
+                    if not baseline_alerts["telemetry_healthy"] or baseline_alerts["alerts"]:
+                        raise StageError("Baseline alerts or telemetry are not healthy; no model trial")
                 self.phase("injection", number)
                 self.make("inject-scenario-faults", number, directory / "injection.log", 600)
                 self.phase("agent_access", number)
@@ -353,21 +389,59 @@ class Batch:
                 self.phase("fault_settle", number)
                 time.sleep(self.args.settle_seconds)
                 self.snapshot(case, directory, "injected.json")
+                if expected:
+                    self.phase("fault_evaluation", number)
+                    injected_alerts = self.collect_alerts(case, expected, directory, "injected",
+                        lambda s: s["rule_healthy"] and bool(s["alerts"]), 300)
+                    if not injected_alerts["rule_healthy"] or not injected_alerts["alerts"]:
+                        raise StageError("Expected fault alert condition not observed; no model trial")
                 self.phase("model", number)
                 ledger["status"] = "model_error"
-                self.command(self.model_command(case, access, directory),
-                             directory / "model.log", self.args.model_timeout)
+                model_case = case
+                if expected:
+                    # The task input includes observed incident evidence, never
+                    # ground-truth entities, solutions or injected fault IDs.
+                    model_case = {**case, "incident": case["incident"] + "\nObserved incident alerts: " + json.dumps([
+                        {"labels": a["labels"], "annotations": a.get("annotations", {}), "state": a["state"]}
+                        for a in injected_alerts["alerts"]])}
+                try:
+                    self.command(self.model_command(model_case, access, directory),
+                                 directory / "model.log", self.args.model_timeout)
+                except StageError as exc:
+                    ledger["error"] = str(exc)
+                    if not (directory / "task.json").exists():
+                        write_json(directory / "task.json", recover_trial(directory, number, configuration, str(exc)))
                 record = json.loads((directory / "task.json").read_text())
                 if record.get("raw_aoi_trace"):
                     trace = self.root / record["raw_aoi_trace"]
                     if trace.is_file():
                         shutil.copyfile(trace, directory / "raw-aoi-trace.json")
-                ledger["status"] = "model_error" if record.get("error") else "executed_ungraded"
-                ledger["error"] = record.get("error")
+                ledger["status"] = "model_error" if record.get("error") or ledger["error"] else "executed_ungraded"
+                ledger["error"] = ledger["error"] or record.get("error")
                 self.snapshot(case, directory, "post-model.json")
                 review_directory(directory)
+                if expected:
+                    self.phase("mitigation_evaluation", number)
+                    post_samples = []
+                    deadline = time.monotonic() + 180
+                    while True:
+                        post_samples.append(self.collect_alerts(case, expected, directory, "post", lambda s: True, 0))
+                        if (len(post_samples) >= 3 and all(s["telemetry_healthy"] and not s["alerts"] for s in post_samples[-3:])) or time.monotonic() >= deadline:
+                            break
+                        time.sleep(30)
+                    self.snapshot(case, directory, "post-evaluation.json")
+                    evaluation = alert_verdict(baseline_alerts, injected_alerts, post_samples[-3:],
+                        json.loads((directory / "baseline.json").read_text()),
+                        json.loads((directory / "post-evaluation.json").read_text()))
+                    if record.get("error") or ledger["error"]:
+                        evaluation.update(passed=None, reason="model_trial_error")
+                    write_json(directory / "mitigation-evaluation.json", evaluation)
+                    record["mitigation_evaluation"] = evaluation
+                    write_json(directory / "task.json", record)
             except (OSError, ValueError, subprocess.SubprocessError, StageError) as exc:
                 ledger["error"] = str(exc)
+                if getattr(self.args, "mitigation_evaluation", False) and str(exc).startswith("Benchmark target missing:"):
+                    ledger["status"] = "excluded"
             finally:
                 ledger.update(ended_at=timestamp(), total_case_seconds=round(time.monotonic() - began, 3))
                 write_json(directory / "case.json", ledger)
@@ -400,6 +474,7 @@ def build_parser():
     parser.add_argument("--model-timeout", type=int, default=1800)
     parser.add_argument("--retry-environment-errors", action="store_true", help="Retry setup/injection errors on resume; preserve their earlier case ledgers")
     parser.add_argument("--retry-scenario-number", type=int, action="append", help="Limit environment retries to scenarios with a concrete setup fix")
+    parser.add_argument("--mitigation-evaluation", action="store_true", help="Require observed fault alerts and independently evaluate resolution")
     parser.add_argument("--list", action="store_true")
     return parser
 

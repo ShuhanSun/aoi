@@ -223,3 +223,40 @@ even with the same model name. The checked source and endpoint are pinned in
 the task subprocess environment and also recorded in each task configuration.
 API keys are never included in backend identity; rotating a key alone does not
 change the manifest.
+
+## Mitigation evaluation and interruption-safe records
+
+Enable `--mitigation-evaluation` for protocol `itbench_alert_resolution_v1`.
+It records ground-truth file hashes and uses the declared alert names/labels
+only in the external evaluator. The agent receives observed incident alerts,
+not fault IDs, solutions or ground-truth entities.
+
+A valid trial requires a healthy application baseline with traffic and healthy,
+fresh Prometheus alert-rule evaluations. After injection, the expected alert
+condition must appear in the application namespace (pending or firing); absent
+conditions are environment errors, never assumed successful. After the model
+ends, collect at least three observations spaced 30 seconds apart. Passing
+requires all expected conditions absent, traffic/telemetry healthy, unchanged
+alert rules, and baseline workloads still present with nonzero desired replicas,
+current observed generations and fully updated/ready replicas. A post-model
+check may wait at most 180 seconds. Setup checks wait at most 300 seconds.
+
+This is a versioned local research protocol implementing alert-condition
+resolution, not an official upstream ITBench verdict. It intentionally includes
+pending conditions, before upstream firing delays expire; disclose this choice
+in the paper. Official success remains null. Report `alert_resolution_rate`
+only over trials with boolean mitigation evaluations; separately disclose
+unknown/model-error/excluded cases and full 31-scenario coverage.
+
+Scenarios 16/24 have no alert criterion in this pinned ground truth and are
+excluded from this protocol. Missing catalog targets (currently 46/63) are
+explicitly excluded after deployment validation; do not create fake targets.
+The previous protocol-v2 run remains an exploratory run, not retrospectively
+graded under this protocol.
+
+`events.jsonl` journals configuration/start time, completed provider usage and
+tool-call starts/results with fsync after each event. Graceful cancellation
+writes task.json; after forced termination the batch recovers a partial task
+from the journal. In-flight provider usage and tool outputs are unknown, not 0,
+and recovered records are marked incomplete. The old scenario116 missing usage
+cannot be recovered and remains disclosed.

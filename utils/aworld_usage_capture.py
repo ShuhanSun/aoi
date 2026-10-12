@@ -7,7 +7,7 @@ from utils.llm_usage import usage_from_result
 
 
 @contextmanager
-def capture_aworld_usage():
+def capture_aworld_usage(on_usage=None):
     # AWorld calls this module-level function after each provider completion,
     # but its Runners.run result may not expose the same usage to our agents.
     import aworld.models.openai_provider as provider_module
@@ -34,6 +34,8 @@ def capture_aworld_usage():
         if normalized["total_tokens"]:
             normalized["role"] = role.get()
             calls.append(normalized)
+            if on_usage is not None:
+                on_usage(normalized)
         return original(usage, *args, **kwargs)
 
     provider_module.usage_process = capture

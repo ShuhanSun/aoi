@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
 from urllib.request import urlopen
+from benchmarks.itbench.journal import append_event
 
 
 READ_ONLY_VERBS = {
@@ -63,6 +64,7 @@ class ITBenchEnvironmentClient:
         self.repaired = False
         self.verified_after_repair = False
         self.tool_calls: list[dict[str, Any]] = []
+        self.journal_path = None
 
     def init_problem(self, problem_id: str) -> dict[str, Any]:
         if problem_id != self.scenario_id:
@@ -113,6 +115,7 @@ class ITBenchEnvironmentClient:
 
     def _execute(self, action: str, role: str) -> dict[str, Any]:
         started = datetime.now(timezone.utc)
+        append_event(self.journal_path, "tool_action_started", {"timestamp": started.isoformat(), "role": role, "action": action})
         try:
             expression = ast.parse(action.strip(), mode="eval").body
             if not isinstance(expression, ast.Call) or not isinstance(expression.func, ast.Name):
@@ -198,6 +201,7 @@ class ITBenchEnvironmentClient:
             "duration_seconds": (datetime.now(timezone.utc) - started).total_seconds(),
             "result": result,
         })
+        append_event(self.journal_path, "tool_call", self.tool_calls[-1])
         return result
 
     def is_problem_solved(self) -> bool:
