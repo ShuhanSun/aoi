@@ -286,3 +286,22 @@ literal (e.g. `stdin='kind: ConfigMap\n'`) or a triple-quoted literal. Malformed
 syntax is rejected with this guidance; the adapter does not guess how to repair
 an ambiguous command. Rejected dispatches remain in `tool_calls` and tool-error
 statistics. Existing read-only Probe and connection-override restrictions apply.
+
+### Local validation (2026-10-11 PDT)
+
+The [sanitized validation record](itbench-access-fixes-validation-2026-10-11.json)
+contains 76 passing offline tests and the local Kubernetes checks. Granting
+scenario 16, revoking twice, then granting 53 removes old namespace access while
+preserving RBAC objects without both ownership labels. Scenario 48's real CLI
+stops before model initialization and does not create a model task record.
+Malformed command replays return logged errors; valid multiline retries apply
+and read back a ConfigMap, while Probe writes remain blocked.
+
+One fresh scenario 53 run with `gpt-4o-mini`, temperature 0 and 14 iterations
+completed in 392.163 seconds (542,665 provider-reported tokens). The model
+recreated the PVC with `standard`, completed the Deployment rollout, and passed
+independent direct-v3 and productpage requests before harness baseline cleanup.
+Its manifest call reached kubectl successfully. There were still 16 tool errors
+across 46 dispatches, including immutable PVC patch and restricted diagnostic
+queries; this is not a claim of error-free execution. Official success and cost
+remain null. No full suite or success-rate comparison was performed.

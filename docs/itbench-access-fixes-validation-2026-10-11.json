@@ -1,0 +1,104 @@
+{
+  "offline_regression_tests": {
+    "run": 76,
+    "passed": 76
+  },
+  "access_isolation": {
+    "utc": "2026-10-12T01:24:35.441848+00:00",
+    "checks": [
+      {
+        "check": "otel_authorized_before_revoke",
+        "passed": true
+      },
+      {
+        "check": "owned_objects_deleted_and_unrelated_preserved_after_two_revokes",
+        "passed": true
+      },
+      {
+        "check": "book_info_authorized",
+        "passed": true
+      },
+      {
+        "check": "old_otel_namespace_not_inherited",
+        "passed": true
+      },
+      {
+        "check": "scenario_16_permission_preflight",
+        "expected_passed": false,
+        "actual_passed": false,
+        "passed": true
+      },
+      {
+        "check": "scenario_48_permission_preflight",
+        "expected_passed": false,
+        "actual_passed": false,
+        "passed": true
+      },
+      {
+        "check": "scenario_53_permission_preflight",
+        "expected_passed": true,
+        "actual_passed": true,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  "command_format_checks": {
+    "checks": [
+      {
+        "check": "list_action_returns_logged_error",
+        "passed": true
+      },
+      {
+        "check": "invalid_multiline_rejected_with_guidance",
+        "passed": true
+      },
+      {
+        "check": "retry_with_escaped_multiline_applies",
+        "passed": true
+      },
+      {
+        "check": "probe_reads_applied_data",
+        "passed": true
+      },
+      {
+        "check": "probe_write_remains_blocked",
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  "scenario48_cli": {
+    "exit_code": 1,
+    "model_record_created": false,
+    "preflight_passed": false,
+    "blocked_message_present": true
+  },
+  "scenario53": {
+    "scenario": 53,
+    "aoi_revision": "3592db058d084380a88ab1184ac18eb83122e937",
+    "itbench_revision": "333afa05c421b4e02a47b6c1b51686d20ce40cdd",
+    "itbench_patch_sha256": "42ac7693b53fc86379d08f75427aa1448f28f7fc5b39b5df5a3d34a91b11e8b5",
+    "model": "gpt-4o-mini",
+    "max_iterations": 14,
+    "duration_seconds": 392.163,
+    "submitted": true,
+    "official_success": null,
+    "local_rollout_complete": true,
+    "direct_v3_request_passed": true,
+    "local_passed": true,
+    "tokens": 542665,
+    "tool_calls": 46,
+    "tool_errors": 16,
+    "provider_calls": 76,
+    "cost_usd": null,
+    "error": null
+  },
+  "limitations": [
+    "One live model scenario; no full-suite or success-rate claim.",
+    "Official SRE grader not executed; official success remains null.",
+    "Unknown fault IDs report partial permission coverage.",
+    "Command rejection/retry tested deterministically against the live cluster independently of the model run.",
+    "StorageClass listing remains forbidden for the restricted agent; preflight does not certify every diagnostic path."
+  ]
+}
