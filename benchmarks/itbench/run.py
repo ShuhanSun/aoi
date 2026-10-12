@@ -92,6 +92,7 @@ async def run(args: argparse.Namespace) -> dict:
 
     client = ITBenchEnvironmentClient(
         scenario_id, args.incident, kubeconfig, args.prometheus_url,
+        namespaces=getattr(args, "namespaces", None),
     )
     model = args.model or DEFAULT_MODEL
     config = _configure_model(model, args.temperature)
@@ -151,6 +152,7 @@ async def run(args: argparse.Namespace) -> dict:
         "duration_seconds": round(monotonic() - start_clock, 3),
         "configuration": {
             **llm_config.backend_identity(),
+            "namespaces": client.namespaces,
             "model": model, "temperature": config.llm_config.llm_temperature,
             "max_iterations": args.max_iterations,
             "max_context_tokens": args.max_context_tokens,
@@ -191,6 +193,8 @@ def main() -> None:
     parser.add_argument("--itbench-dir", type=Path, required=True)
     parser.add_argument("--scenario-number", type=int, required=True)
     parser.add_argument("--incident", required=True, help="Agent-visible incident text from ITBench")
+    parser.add_argument("--namespace", dest="namespaces", action="append",
+                        help="Scenario namespace metadata; repeat for multiple namespaces")
     parser.add_argument("--kubeconfig", type=Path, required=True, help="ITBench restricted agent kubeconfig")
     parser.add_argument("--prometheus-url", help="ITBench Prometheus base URL for alerts and PromQL")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"model (default: {DEFAULT_MODEL})")
