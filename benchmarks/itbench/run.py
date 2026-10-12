@@ -108,7 +108,7 @@ async def run(args: argparse.Namespace) -> dict:
     with capture_aworld_usage() as provider_calls:
         try:
             attempt = await platform.run(problem_id=scenario_id)
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             error = f"{type(exc).__name__}: {exc}"
     ended_at = datetime.now(timezone.utc)
     verdict = load_itbench_verdict(args.verdict_json)
