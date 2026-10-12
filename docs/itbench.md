@@ -352,3 +352,19 @@ format rejection, stdin retry/readback, scenario 48 blocking, and preservation
 of an unfinished object-valued dispatch during simulated interruption. No new
 model inference or full-suite experiment was performed for this merge update;
 the scenario 53 model result above retains its original code revision.
+
+A subsequent **fresh real-API run at `a2bb64b`** validated the merged code with
+`gpt-4o-mini`, temperature 0, and a 14-iteration limit. It completed in 384.532
+seconds using 728,563 provider-reported tokens. All 67 provider usage entries
+and 37 tool dispatches (8 errors) match the final task record exactly. The
+journal contains trial start/end events and no unfinished tool dispatches;
+replaying recovery preserves usage and tool results. The live process was not
+interrupted, so this checks recovery replay rather than a real cancellation.
+
+The model deleted the invalid PVC, removed its injected volume/mount, and
+increased reviews-v3 to two replicas. Complete rollout and direct-v3/productpage
+requests passed before cleanup. The harness then restored the original specs
+and one replica. No stdin manifest or non-string command occurred in this fresh
+model run; those paths retain their separate adapter/offline test evidence.
+Official success and estimated cost remain null; no full suite or batch
+live-alert evaluation was run.
