@@ -42,13 +42,35 @@ def _kubectl_verb(args: list[str]) -> str:
     return ""
 
 
+def _uses_stdin_manifest(argv: list[str]) -> bool:
+    """Require one stdin filename, independent of other kubectl option positions."""
+    filenames = []
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg in {"-f", "--filename"}:
+            index += 1
+            if index == len(argv):
+                return False
+            filenames.append(argv[index])
+        elif arg.startswith("--filename="):
+            filenames.append(arg.split("=", 1)[1])
+        elif arg.startswith("-f") and len(arg) > 2:
+            filenames.append(arg[2:].removeprefix("="))
+        elif arg == "--kustomize" or arg.startswith("--kustomize=") or arg.startswith("-k"):
+            return False
+        index += 1
+    return filenames == ["-"]
+
+
 class ITBenchEnvironmentClient:
     benchmark_name = "ITBench"
 
     def __init__(self, scenario_id: str, incident: str, kubeconfig: Path,
-                 prometheus_url: str | None = None):
+                 prometheus_url: str | None = None, namespaces: list[str] | None = None):
         self.scenario_id = scenario_id
         self.incident = incident
+        self.namespaces = list(dict.fromkeys(namespaces or []))
         self.kubeconfig = Path(kubeconfig).expanduser().resolve()
         if not self.kubeconfig.is_file():
             raise FileNotFoundError(f"ITBench kubeconfig not found: {self.kubeconfig}")
@@ -69,12 +91,23 @@ class ITBenchEnvironmentClient:
     def init_problem(self, problem_id: str) -> dict[str, Any]:
         if problem_id != self.scenario_id:
             raise ValueError(f"Expected ITBench scenario {self.scenario_id}, got {problem_id}")
+        if self.namespaces:
+            examples = "; ".join(f"exec_kubectl({['get', 'pods', '-n', namespace]!r})"
+                                 for namespace in self.namespaces)
+            namespace_instruction = f"Scenario namespaces: {', '.join(self.namespaces)}. Inspect with {examples}. "
+        else:
+            namespace_instruction = (
+                "Use exec_kubectl(['get', 'pods', '-n', '<incident-namespace>']); "
+                "replace <incident-namespace> with a namespace identified in the incident. "
+                "No scenario namespace metadata was supplied; do not assume a default namespace. "
+            )
         return {
             "session_id": self.session_id,
             "problem_id": problem_id,
+            "namespaces": self.namespaces,
             "task_description": self.incident,
             "instructions": (
-                "Prefer exec_kubectl(['get', 'pods', '-n', 'otel-demo']). Pass each kubectl argument "
+                namespace_instruction + "Pass each kubectl argument "
                 "as a separate string; JSON patches are single arguments. For apply -f -, provide "
                 "stdin='YAML or JSON'. Never use kubectl edit, shell operators, or heredocs. "
                 "The restricted account may not list namespaces; use the incident namespace explicitly. "
@@ -173,8 +206,8 @@ class ITBenchEnvironmentClient:
                     raise ValueError(f"Interactive or remote shell verb {verb} is unsupported; use get, patch, apply, set, or rollout")
                 if role == "probe" and verb not in READ_ONLY_VERBS:
                     raise ValueError(f"Probe cannot run state-changing kubectl verb: {verb}")
-                if stdin is not None and (verb != "apply" or "-f" not in argv or argv[argv.index("-f") + 1:] != ["-"]):
-                    raise ValueError("stdin is only supported with apply -f - (place -f - last)")
+                if stdin is not None and (verb != "apply" or not _uses_stdin_manifest(argv)):
+                    raise ValueError("stdin requires apply with exactly one stdin filename (-f - or --filename=-)")
                 completed = subprocess.run(
                     ["kubectl", "--kubeconfig", str(self.kubeconfig), *argv],
                     input=stdin,

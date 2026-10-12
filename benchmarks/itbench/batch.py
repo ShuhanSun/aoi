@@ -298,6 +298,8 @@ class Batch:
                    "--prometheus-url", f"http://127.0.0.1:{self.args.prometheus_port}/prometheus",
                    "--model", self.args.model, "--temperature", "0", "--max-iterations", "14",
                    "--output", str(directory / "task.json")]
+        for namespace in case.get("namespaces", []):
+            command.extend(["--namespace", namespace])
         validate_prices(self.args.input_usd_per_million, self.args.output_usd_per_million)
         if self.args.input_usd_per_million is not None:
             command.extend(["--input-usd-per-million", str(self.args.input_usd_per_million),

@@ -51,6 +51,7 @@ From this AOI checkout:
 .venv/bin/python -m benchmarks.itbench.run \
   --itbench-dir /absolute/path/to/ITBench \
   --scenario-number 1 \
+  --namespace otel-demo \
   --incident 'Investigate and resolve the active SRE incident' \
   --kubeconfig /absolute/path/to/restricted-kubeconfig \
   --prometheus-url http://prometheus.example:9090
@@ -65,9 +66,20 @@ with `--start-scenario`, which calls ITBench's `start-scenario` and
 `enable-agent-access` Make targets after its checkout has been configured.
 Use `--stop-scenario` only when the run and external evaluation are finished.
 
-Agents should prefer `exec_kubectl(['get', 'pods', '-n', 'otel-demo'])` over
-nested shell strings. JSON patches are one argument in the list. For a
-manifest, use `exec_kubectl(['apply', '-n', 'otel-demo', '-f', '-'], stdin='...')`.
+Pass `--namespace` for the scenario's application namespace (repeat it for
+multiple namespaces). The batch runner forwards this metadata from the catalog;
+the adapter generates examples for those namespaces instead of assuming
+`otel-demo`. Without metadata, examples explicitly require replacing
+`<incident-namespace>` with a namespace from the incident. Namespace metadata
+is also saved in the task configuration.
+
+Agents should prefer structured `exec_kubectl([...])` over nested shell strings.
+JSON patches are one argument in the list. For a manifest, both
+`exec_kubectl(['apply', '-n', 'book-info', '-f', '-'], stdin='...')` and
+`exec_kubectl(['apply', '-f', '-', '-n', 'book-info'], stdin='...')` are supported.
+`--filename -` and `--filename=-` are also accepted. Exactly one stdin filename
+is required: file paths, multiple filename options and kustomize input cannot
+be combined with `stdin`. Arguments and manifest text pass through unchanged.
 Shell operators, interactive `kubectl edit`, remote shell execution, and
 connection overrides are rejected. `submit()` records the agent's decision to
 finish without imposing an additional repair/read gate. It never establishes
@@ -260,3 +272,20 @@ writes task.json; after forced termination the batch recovers a partial task
 from the journal. In-flight provider usage and tool outputs are unknown, not 0,
 and recovered records are marked incomplete. The old scenario116 missing usage
 cannot be recovered and remains disclosed.
+
+## Smoke validation for tool-contract fixes
+
+Before a new full suite, use a fresh output directory and the same model/budgets
+for representative scenarios 16, 48, and 53. Verify telemetry and fault injection
+first, and explicitly supply `--namespace otel-demo` for 16 and
+`--namespace book-info` for 48/53 when using the single-task runner.
+
+- 16: inspect the initial Probe command; it should no longer contain `--show-all`.
+- 48: confirm the generated examples use `book-info`, not `otel-demo`. Restricted
+  RBAC errors on Istio resources may still occur; this change does not grant permissions.
+- 53: verify manifest calls with namespace options after `-f -` reach kubectl.
+  Invalid manifests, immutable PVC fields, and unavailable storage classes remain
+  separate failures and must be recorded rather than counted as successful repair.
+
+Save task records and obtain an independent repair verdict before claiming a
+success-rate change. Offline command replays only verify adapter acceptance.
