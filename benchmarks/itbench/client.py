@@ -109,7 +109,10 @@ class ITBenchEnvironmentClient:
             "instructions": (
                 namespace_instruction + "Pass each kubectl argument "
                 "as a separate string; JSON patches are single arguments. For apply -f -, provide "
-                "stdin='YAML or JSON'. Never use kubectl edit, shell operators, or heredocs. "
+                "stdin='YAML or JSON'. Return the entire action as a string, not a list or object. "
+                "Within a Python single-quoted stdin string, escape newlines as \\n; "
+                "literal multiline content requires triple quotes. "
+                "Never use kubectl edit, shell operators, or heredocs. "
                 "The restricted account may not list namespaces; use the incident namespace explicitly. "
                 "Inspect actual configuration and telemetry before choosing a repair. "
                 "Use kubectl set env for individual environment changes and set resources for limits; "
@@ -150,6 +153,9 @@ class ITBenchEnvironmentClient:
         started = datetime.now(timezone.utc)
         append_event(self.journal_path, "tool_action_started", {"timestamp": started.isoformat(), "role": role, "action": action})
         try:
+            if not isinstance(action, str):
+                raise ValueError("Action must be a Python call string, not a list/object; "
+                                 "use exec_kubectl(['get', 'pods', '-n', '<incident-namespace>']) as a string")
             expression = ast.parse(action.strip(), mode="eval").body
             if not isinstance(expression, ast.Call) or not isinstance(expression.func, ast.Name):
                 raise ValueError("Expected exec_shell('kubectl ...') or submit()")
@@ -227,7 +233,10 @@ class ITBenchEnvironmentClient:
         except (SyntaxError, ValueError, TypeError, subprocess.TimeoutExpired, OSError) as exc:
             message = str(exc)
             if isinstance(exc, SyntaxError):
-                message += "; use exec_kubectl(['verb', 'resource', '-n', 'namespace']) to avoid nested shell quoting"
+                message += ("; provide a Python call string. For multiline stdin, escape newlines as "
+                            "\\n or use a triple-quoted Python string; do not put literal newlines "
+                            "inside a single-quoted string. Example: "
+                            "exec_kubectl(['apply', '-f', '-'], stdin='kind: ConfigMap\\n')")
             result = {"result": message, "error": True}
         self.tool_calls.append({
             "timestamp": started.isoformat(), "role": role, "action": action,
