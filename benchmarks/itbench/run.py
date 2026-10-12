@@ -16,6 +16,7 @@ from time import monotonic
 import llm_config
 from benchmarks.itbench.client import ITBenchEnvironmentClient, load_itbench_verdict
 from benchmarks.itbench.verify import verify
+from benchmarks.itbench.preflight import require_permissions
 from benchmarks.itbench.pricing import add_pricing_arguments, estimate_cost, validate_prices
 from main import AIOPlatform
 from utils.aworld_usage_capture import capture_aworld_usage
@@ -94,6 +95,8 @@ async def run(args: argparse.Namespace) -> dict:
         scenario_id, args.incident, kubeconfig, args.prometheus_url,
         namespaces=getattr(args, "namespaces", None),
     )
+    require_permissions(itbench_dir, args.scenario_number, kubeconfig, client.namespaces,
+                        args.output.with_suffix(".preflight.json"))
     model = args.model or DEFAULT_MODEL
     config = _configure_model(model, args.temperature)
     platform = AIOPlatform(

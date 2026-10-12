@@ -20,6 +20,7 @@ from pathlib import Path
 import yaml
 
 from benchmarks.itbench.summary import summarize
+from benchmarks.itbench.preflight import require_permissions
 from benchmarks.itbench.review import review_directory
 from benchmarks.itbench.pricing import add_pricing_arguments, validate_prices
 
@@ -184,6 +185,7 @@ class Batch:
 
     def cleanup(self, number, directory):
         self.phase("cleanup", number)
+        self.make("disable-agent-access", number, directory / "cleanup.log")
         self.make("remove-fault-resources", number, directory / "cleanup.log")
         self.command(["helm", "--kubeconfig", str(self.admin), "uninstall", "otel-demo",
                       "-n", "otel-demo", "--ignore-not-found", "--wait", "--timeout", "5m"],
@@ -343,8 +345,6 @@ class Batch:
                     self.command(self.kubectl("rollout", "status", "deployment", "-n", namespace, "--timeout=180s"),
                                  directory / "baseline-readiness.log", 200)
                 self.snapshot(case, directory, "baseline.json")
-                self.phase("injection", number)
-                self.make("inject-scenario-faults", number, directory / "injection.log", 600)
                 self.phase("agent_access", number)
                 self.make("enable-agent-access", number, directory / "access.log", 180)
                 access_source = self.root / "res/itbench/runtime/kubeconfig"
@@ -352,6 +352,11 @@ class Batch:
                 access.write_bytes(access_source.read_bytes())
                 access.chmod(0o600)
                 access_source.chmod(0o600)
+                self.phase("permission_preflight", number)
+                require_permissions(self.itbench, number, access, case["namespaces"],
+                                    directory / "permission-preflight.json")
+                self.phase("injection", number)
+                self.make("inject-scenario-faults", number, directory / "injection.log", 600)
                 self.phase("fault_settle", number)
                 time.sleep(self.args.settle_seconds)
                 self.snapshot(case, directory, "injected.json")

@@ -252,3 +252,37 @@ first, and explicitly supply `--namespace otel-demo` for 16 and
 
 Save task records and obtain an independent repair verdict before claiming a
 success-rate change. Offline command replays only verify adapter acceptance.
+
+## Access isolation and permission preflight
+
+Reapply the updated `itbench-333afa05.patch` to a clean checkout of the pinned
+ITBench revision. The revoke role now discovers RoleBindings and Roles across
+all namespaces using **both** ITBench agent ownership labels, deletes those
+objects before deleting the ServiceAccount, and leaves unrelated RBAC objects
+alone. Batch cleanup also invokes `disable-agent-access` before removing apps.
+Deleting a ServiceAccount alone is insufficient: bindings reference its name,
+so a new account with the same name would inherit old namespace access.
+
+Both runners check known repair operations with `kubectl auth can-i` using the
+**restricted** kubeconfig before starting the model. Batch grants access and
+checks it before fault injection; a denial produces an `environment_error` case
+ledger without a model task record. Single-task runs save `<output>.preflight.json`
+and stop before model configuration on denial; if the scenario was already
+injected (including `--start-scenario`), the caller still owns its cleanup.
+Batch saves `permission-preflight.json` in the case directory. No permissions
+are automatically granted or expanded.
+
+Checks currently cover namespace-scoped pod/deployment inspection and the known
+repair operations for environment-variable changes (16), Namespace ambient
+labels (48), and missing PVCs (53). They are not an exhaustive repair plan:
+`unchecked_fault_ids` and `coverage: partial` disclose unsupported fault types.
+In the default restricted setup, 48 is blocked because Namespace patch is absent.
+Fault metadata is used only by the harness and is not added to model prompts.
+
+Actions must be Python call **strings**. A list/object action now returns a
+logged, retryable format error instead of raising an unrecorded `.strip()`
+exception. For multiline `stdin`, use escaped newlines in a single-quoted Python
+literal (e.g. `stdin='kind: ConfigMap\n'`) or a triple-quoted literal. Malformed
+syntax is rejected with this guidance; the adapter does not guess how to repair
+an ambiguous command. Rejected dispatches remain in `tool_calls` and tool-error
+statistics. Existing read-only Probe and connection-override restrictions apply.
