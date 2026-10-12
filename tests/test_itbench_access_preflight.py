@@ -91,6 +91,12 @@ class PermissionTest(unittest.TestCase):
         self.assertFalse(args.output.exists())
 
     def test_batch_permission_failure_never_injects_or_starts_model(self):
+        self.check_batch_permission_failure()
+
+    def test_alert_evaluation_permission_failure_never_injects_or_starts_model(self):
+        self.check_batch_permission_failure(mitigation=True)
+
+    def check_batch_permission_failure(self, mitigation=False):
         batch = Batch.__new__(Batch)
         batch.root = self.root
         batch.itbench = self.root
@@ -100,8 +106,11 @@ class PermissionTest(unittest.TestCase):
         batch.env = {}
         batch.cases = [{'scenario_number': 48, 'namespaces': ['book-info'], 'deployment_variables': {}}]
         batch.progress = {'completed': []}
+        ground_truth = self.root / 'library/scenarios/48/ground_truth.yaml'
+        ground_truth.parent.mkdir(parents=True)
+        ground_truth.write_text('alerts: [{name: Fault}]')
         batch.args = argparse.Namespace(model='test', input_usd_per_million=None,
-            output_usd_per_million=None, settle_seconds=0, model_timeout=10, uv_command='uv')
+            output_usd_per_million=None, settle_seconds=0, model_timeout=10, uv_command='uv', mitigation_evaluation=mitigation)
         access = self.root / 'res/itbench/runtime/kubeconfig'
         access.parent.mkdir(parents=True); access.write_text('test')
         with patch.object(batch, 'check_cluster'), patch.object(batch, 'phase'), \
@@ -109,11 +118,13 @@ class PermissionTest(unittest.TestCase):
              patch.object(batch, 'cleanup'), patch.object(batch, 'command') as command, \
              patch.object(batch, 'check_targets'), patch.object(batch, 'snapshot'), \
              patch.object(batch, 'report'), patch.object(batch, 'model_command') as model, \
+             patch.object(batch, 'collect_alerts', return_value={'telemetry_healthy': True, 'alerts': []}) as alerts, \
              patch('benchmarks.itbench.batch.model_backend_identity', return_value={'api_source':'openai','api_base':'test'}), \
              patch('benchmarks.itbench.batch.experiment_provenance', return_value={}), \
              patch('benchmarks.itbench.batch.require_permissions', side_effect=ValueError('permission denied')):
             batch.execute()
             model.assert_not_called()
+            self.assertEqual(alerts.call_count, int(mitigation))
             self.assertEqual(command.call_count, 2)  # deploy + baseline readiness only
             self.assertNotIn('inject-scenario-faults', [c.args[0] for c in make.call_args_list])
         ledger = json.loads((batch.output / 'scenarios/48/case.json').read_text())

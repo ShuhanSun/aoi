@@ -20,6 +20,7 @@ from benchmarks.itbench.preflight import require_permissions
 from benchmarks.itbench.pricing import add_pricing_arguments, estimate_cost, validate_prices
 from main import AIOPlatform
 from utils.aworld_usage_capture import capture_aworld_usage
+from benchmarks.itbench.journal import append_event
 
 DEFAULT_MODEL = "gpt-4o-mini"
 
@@ -97,6 +98,7 @@ async def run(args: argparse.Namespace) -> dict:
     )
     require_permissions(itbench_dir, args.scenario_number, kubeconfig, client.namespaces,
                         args.output.with_suffix(".preflight.json"))
+    client.journal_path = args.output.parent / "events.jsonl"
     model = args.model or DEFAULT_MODEL
     config = _configure_model(model, args.temperature)
     platform = AIOPlatform(
@@ -109,10 +111,16 @@ async def run(args: argparse.Namespace) -> dict:
     start_clock = monotonic()
     attempt = None
     error = None
-    with capture_aworld_usage() as provider_calls:
+    append_event(client.journal_path, "trial_started", {
+        "scenario_number": args.scenario_number, "started_at": started_at.isoformat(),
+        "model": model, "temperature": config.llm_config.llm_temperature,
+        "max_iterations": args.max_iterations, "max_context_tokens": args.max_context_tokens,
+        "max_output_tokens": args.max_output_tokens,
+        "input_usd_per_million": args.input_usd_per_million, "output_usd_per_million": args.output_usd_per_million})
+    with capture_aworld_usage(on_usage=lambda usage: append_event(client.journal_path, "provider_usage", usage)) as provider_calls:
         try:
             attempt = await platform.run(problem_id=scenario_id)
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             error = f"{type(exc).__name__}: {exc}"
     ended_at = datetime.now(timezone.utc)
     verdict = load_itbench_verdict(args.verdict_json)
@@ -182,9 +190,14 @@ async def run(args: argparse.Namespace) -> dict:
             "Supply model input/output prices to estimate cost."
         ),
         "error": error,
+        "record_complete": error is None,
+        "usage_complete": error is None,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    temporary = args.output.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    temporary.replace(args.output)
+    append_event(client.journal_path, "trial_ended", {"ended_at": ended_at.isoformat(), "error": error})
     if args.stop_scenario:
         _run_scenario_target(itbench_dir, args.scenario_number, "disable-agent-access")
         _run_scenario_target(itbench_dir, args.scenario_number, "stop-scenario")

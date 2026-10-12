@@ -1,8 +1,11 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 from benchmarks.itbench.client import ITBenchEnvironmentClient
+from benchmarks.itbench.journal import append_event
+from benchmarks.itbench.recover import recover_trial
 
 
 class CommandValidationTest(unittest.TestCase):
@@ -48,3 +51,23 @@ class CommandValidationTest(unittest.TestCase):
             result = self.client.execute_action(f"exec_kubectl(['apply', '-f', '-'], stdin={literal})")
             self.assertNotIn('error', result)
             self.assertEqual(run.call_args.kwargs['input'], manifest)
+
+    @patch('benchmarks.itbench.client.subprocess.run')
+    def test_malformed_actions_survive_durable_journal_recovery(self, run):
+        directory = Path(self.temp.name)
+        self.client.journal_path = directory / 'events.jsonl'
+        actions = [['exec_kubectl', ['get', 'pods']], {'command': 'get pods'}]
+        for action in actions:
+            self.client.execute_action(action)
+        events = [json.loads(line) for line in self.client.journal_path.read_text().splitlines()]
+        self.assertEqual([e['kind'] for e in events],
+                         ['tool_action_started', 'tool_call'] * 2)
+        append_event(self.client.journal_path, 'tool_action_started', {
+            'timestamp': 'in-flight', 'role': 'probe', 'action': ['get_alerts']})
+        record = recover_trial(directory, 53, {}, 'cancelled')
+        self.assertEqual([c['action'] for c in record['tool_calls']], actions)
+        self.assertTrue(all(c['result']['error'] for c in record['tool_calls']))
+        self.assertEqual([c['action'] for c in record['in_flight_tool_calls']], [['get_alerts']])
+        self.assertFalse(record['record_complete'])
+        self.assertIsNone(record['success'])
+        run.assert_not_called()

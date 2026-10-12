@@ -100,5 +100,40 @@
     "Unknown fault IDs report partial permission coverage.",
     "Command rejection/retry tested deterministically against the live cluster independently of the model run.",
     "StorageClass listing remains forbidden for the restricted agent; preflight does not certify every diagnostic path."
-  ]
+  ],
+  "post_upstream_merge_validation": {
+    "base_revision": "43d5a59bb9e3b1ff7183376daf460a108d143ffa",
+    "offline_regression_tests": {
+      "run": 87,
+      "passed": 87
+    },
+    "local_smoke": {
+      "utc": "2026-10-12T03:32:07.684493+00:00",
+      "checks": [
+        {
+          "check": "scenario48_blocked_before_model",
+          "passed": true
+        },
+        {
+          "check": "malformed_list_is_logged_error",
+          "passed": true
+        },
+        {
+          "check": "stdin_retry_applied",
+          "passed": true
+        },
+        {
+          "check": "live_readback",
+          "passed": true
+        },
+        {
+          "check": "recovery_retains_list_error_and_inflight_object",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "model_executed": false
+    },
+    "note": "Existing scenario53 model results above predate the upstream merge; this follow-up checks adapter/journal integration without rerunning inference."
+  }
 }

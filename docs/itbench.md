@@ -236,6 +236,43 @@ the task subprocess environment and also recorded in each task configuration.
 API keys are never included in backend identity; rotating a key alone does not
 change the manifest.
 
+## Mitigation evaluation and interruption-safe records
+
+Enable `--mitigation-evaluation` for protocol `itbench_alert_resolution_v1`.
+It records ground-truth file hashes and uses the declared alert names/labels
+only in the external evaluator. The agent receives observed incident alerts,
+not fault IDs, solutions or ground-truth entities.
+
+A valid trial requires a healthy application baseline with traffic and healthy,
+fresh Prometheus alert-rule evaluations. After injection, the expected alert
+condition must appear in the application namespace (pending or firing); absent
+conditions are environment errors, never assumed successful. After the model
+ends, collect at least three observations spaced 30 seconds apart. Passing
+requires all expected conditions absent, traffic/telemetry healthy, unchanged
+alert rules, and baseline workloads still present with nonzero desired replicas,
+current observed generations and fully updated/ready replicas. A post-model
+check may wait at most 180 seconds. Setup checks wait at most 300 seconds.
+
+This is a versioned local research protocol implementing alert-condition
+resolution, not an official upstream ITBench verdict. It intentionally includes
+pending conditions, before upstream firing delays expire; disclose this choice
+in the paper. Official success remains null. Report `alert_resolution_rate`
+only over trials with boolean mitigation evaluations; separately disclose
+unknown/model-error/excluded cases and full 31-scenario coverage.
+
+Scenarios 16/24 have no alert criterion in this pinned ground truth and are
+excluded from this protocol. Missing catalog targets (currently 46/63) are
+explicitly excluded after deployment validation; do not create fake targets.
+The previous protocol-v2 run remains an exploratory run, not retrospectively
+graded under this protocol.
+
+`events.jsonl` journals configuration/start time, completed provider usage and
+tool-call starts/results with fsync after each event. Graceful cancellation
+writes task.json; after forced termination the batch recovers a partial task
+from the journal. In-flight provider usage and tool outputs are unknown, not 0,
+and recovered records are marked incomplete. The old scenario116 missing usage
+cannot be recovered and remains disclosed.
+
 ## Smoke validation for tool-contract fixes
 
 Before a new full suite, use a fresh output directory and the same model/budgets
@@ -305,3 +342,13 @@ Its manifest call reached kubectl successfully. There were still 16 tool errors
 across 46 dispatches, including immutable PVC patch and restricted diagnostic
 queries; this is not a claim of error-free execution. Official success and cost
 remain null. No full suite or success-rate comparison was performed.
+
+After updating to upstream `43d5a59` (including merged PR #2 and the live-alert
+protocol/durable journal), 87 offline tests pass. Additional checks cover
+permission denial before injection in alert-evaluation mode and recovery of
+malformed list/object actions from the journal. Recovery uses a canonical JSON
+identity instead of hashing raw actions. A local adapter smoke verified logged
+format rejection, stdin retry/readback, scenario 48 blocking, and preservation
+of an unfinished object-valued dispatch during simulated interruption. No new
+model inference or full-suite experiment was performed for this merge update;
+the scenario 53 model result above retains its original code revision.
