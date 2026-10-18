@@ -20,6 +20,7 @@ from pathlib import Path
 import yaml
 
 from benchmarks.itbench.summary import summarize
+from benchmarks.itbench.preflight import require_permissions
 from benchmarks.itbench.review import review_directory
 from benchmarks.itbench.evaluate import sample as alert_sample, verdict as alert_verdict, PROTOCOL
 from benchmarks.itbench.recover import recover_trial
@@ -186,6 +187,7 @@ class Batch:
 
     def cleanup(self, number, directory):
         self.phase("cleanup", number)
+        self.make("disable-agent-access", number, directory / "cleanup.log")
         self.make("remove-fault-resources", number, directory / "cleanup.log")
         self.command(["helm", "--kubeconfig", str(self.admin), "uninstall", "otel-demo",
                       "-n", "otel-demo", "--ignore-not-found", "--wait", "--timeout", "5m"],
@@ -379,8 +381,6 @@ class Batch:
                         lambda s: s["telemetry_healthy"] and not s["alerts"], 300)
                     if not baseline_alerts["telemetry_healthy"] or baseline_alerts["alerts"]:
                         raise StageError("Baseline alerts or telemetry are not healthy; no model trial")
-                self.phase("injection", number)
-                self.make("inject-scenario-faults", number, directory / "injection.log", 600)
                 self.phase("agent_access", number)
                 self.make("enable-agent-access", number, directory / "access.log", 180)
                 access_source = self.root / "res/itbench/runtime/kubeconfig"
@@ -388,6 +388,11 @@ class Batch:
                 access.write_bytes(access_source.read_bytes())
                 access.chmod(0o600)
                 access_source.chmod(0o600)
+                self.phase("permission_preflight", number)
+                require_permissions(self.itbench, number, access, case["namespaces"],
+                                    directory / "permission-preflight.json")
+                self.phase("injection", number)
+                self.make("inject-scenario-faults", number, directory / "injection.log", 600)
                 self.phase("fault_settle", number)
                 time.sleep(self.args.settle_seconds)
                 self.snapshot(case, directory, "injected.json")

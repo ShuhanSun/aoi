@@ -132,3 +132,41 @@ index 069d71ee..6ebfd43f 100644
 +        spec_data = spec_data["spec"]
 @@ -290,0 +295 @@ class TestIntegration(unittest.TestCase):
 +        spec_data = spec_data["spec"]
+diff --git a/scenarios/sre/project/roles/agent/tasks/revoke.yaml b/scenarios/sre/project/roles/agent/tasks/revoke.yaml
+index 6b9cb7b2..2020c281 100644
+--- a/scenarios/sre/project/roles/agent/tasks/revoke.yaml
++++ b/scenarios/sre/project/roles/agent/tasks/revoke.yaml
+@@ -1,4 +1,33 @@
+ ---
++# Bindings refer to ServiceAccounts by name, so delete them before the account
++# can be recreated for another scenario. Search all namespaces, not just the
++# current scenario's requested namespaces.
++- name: Find all ITBench agent namespace access objects
++  kubernetes.core.k8s_info:
++    api_version: rbac.authorization.k8s.io/v1
++    kind: "{{ item }}"
++    kubeconfig: "{{ agent_cluster.kubeconfig }}"
++    label_selectors:
++      - "app.kubernetes.io/component = agent-access-provider"
++      - "app.kubernetes.io/managed-by = ITBench"
++  loop:
++    - RoleBinding
++    - Role
++  register: agent_namespace_access_objects
++
++- name: Delete all ITBench agent namespace access objects
++  kubernetes.core.k8s:
++    api_version: "{{ item.apiVersion }}"
++    kind: "{{ item.kind }}"
++    name: "{{ item.metadata.name }}"
++    namespace: "{{ item.metadata.namespace }}"
++    kubeconfig: "{{ agent_cluster.kubeconfig }}"
++    state: absent
++    wait: true
++  loop: "{{ agent_namespace_access_objects.results | map(attribute='resources') | flatten }}"
++  loop_control:
++    label: "{{ item.kind }}/{{ item.metadata.namespace }}/{{ item.metadata.name }}"
++
+ - name: Delete all agent access related ClusterRoleBindings
+   kubernetes.core.k8s:
+     api_version: rbac.authorization.k8s.io/v1

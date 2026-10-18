@@ -4,6 +4,12 @@ import json
 from datetime import datetime, timezone
 
 
+def _tool_key(call):
+    # Malformed model actions can be JSON lists/objects. Preserve them in the
+    # journal while using a hashable identity to match starts with completions.
+    return (call["timestamp"], call["role"], json.dumps(call["action"], sort_keys=True))
+
+
 def recover_trial(directory, scenario_number, configuration, error):
     events = []
     journal = directory / "events.jsonl"
@@ -23,9 +29,9 @@ def recover_trial(directory, scenario_number, configuration, error):
                       + totals["output_tokens"] * configuration["output_usd_per_million"]) / 1e6, 6)
     started_at = starts[0]["started_at"] if starts else None
     ended_at = datetime.now(timezone.utc).isoformat()
-    completed_keys = {(c["timestamp"], c["role"], c["action"]) for c in tools}
+    completed_keys = {_tool_key(c) for c in tools}
     in_flight = [e["value"] for e in events if e["kind"] == "tool_action_started"
-                 and (e["value"]["timestamp"], e["value"]["role"], e["value"]["action"]) not in completed_keys]
+                 and _tool_key(e["value"]) not in completed_keys]
     return {"benchmark": "ITBench", "domain": "SRE", "task_type": "mitigation",
             "scenario_number": scenario_number, "configuration": configuration,
             "started_at": started_at, "ended_at": ended_at,
